@@ -1,24 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { MessageCircle, Globe, Users, Plus, Lock, Send, Heart, MessageSquare, LogOut, Sparkles, Zap, Smile, Palette, HelpCircle, X, Search, Bell, Settings, Menu, TrendingUp, Star, Award, Shield, Crown, Rocket, Image as ImageIcon, ChevronUp, ZoomIn, ChevronDown, Filter, Hash, AtSign } from 'lucide-react';
 
-// Firebase 초기화
-const initFirebase = () => {
-  if (typeof window !== 'undefined' && !window.firebaseInitialized) {
-    const script = document.createElement('script');
-    script.src = 'https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js';
-    document.head.appendChild(script);
-    
-    const authScript = document.createElement('script');
-    authScript.src = 'https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js';
-    document.head.appendChild(authScript);
-    
-    const dbScript = document.createElement('script');
-    dbScript.src = 'https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js';
-    document.head.appendChild(dbScript);
-    
-    window.firebaseInitialized = true;
-  }
-};
 
 const App = () => {
   const [currentView, setCurrentView] = useState('chat');
