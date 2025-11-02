@@ -165,16 +165,8 @@ useEffect(() => {
 
 
 useEffect(() => {
-  // 사용자가 스크롤을 위로 올렸는지 확인
-  const chatContainer = messagesEndRef.current?.parentElement;
-  if (!chatContainer) return;
-  
-  const isScrolledToBottom = chatContainer.scrollHeight - chatContainer.scrollTop <= chatContainer.clientHeight + 100;
-  
-  // 맨 아래에 있을 때만 자동 스크롤
-  if (isScrolledToBottom) {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }
+  // 항상 맨 아래로 스크롤
+  messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
 }, [messages]);
 
 // 방 입장 시 맨 아래로 스크롤
