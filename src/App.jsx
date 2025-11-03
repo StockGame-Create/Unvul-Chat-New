@@ -58,6 +58,15 @@ const [friendRequests, setFriendRequests] = useState([]);
 const [sentRequests, setSentRequests] = useState([]);
 const [friendModalTab, setFriendModalTab] = useState('friends-list');
 
+const [showMessageManagement, setShowMessageManagement] = useState(false);
+const [messageFilters, setMessageFilters] = useState({
+  latestFirst: true,
+  messagesOnly: true,
+  showMine: true,
+  showOthers: true
+});
+
+
   const emojis = ['😀', '😂', '❤️', '👍', '🎉', '🔥', '💯', '✨', '😎', '🤔', '😍', '🚀', '⭐', '💪', '🎮', '🎨'];
 
 const [roomDataBuffer, setRoomDataBuffer] = useState({});
@@ -941,6 +950,24 @@ const checkUserOnlineStatus = (friendUid) => {
   return false;
 };
 
+const deleteMyMessage = (messageId) => {
+  const messageRef = window.firebase.database().ref(`rooms/${selectedRoom.id}/messages/${messageId}`);
+  messageRef.update({
+    deleted: true,
+    deletedAt: Date.now()
+  }).then(() => {
+    showToast('🗑️ Message deleted', 'success');
+  }).catch(err => {
+    console.error('Delete error:', err);
+    showToast('❌ Failed to delete message', 'error');
+  });
+};
+
+const copyMessage = (messageText) => {
+  navigator.clipboard.writeText(messageText);
+  showToast('📋 Message copied!', 'success');
+};
+
 const sendMessage = () => {
   if (!newMessage.trim() || !selectedRoom) return;
   
@@ -1407,6 +1434,36 @@ const sendMentionNotification = (messageId, mentionedUserName) => {
   });
 };
 
+const getFilteredMessages = () => {
+  let filtered = messages.filter(msg => !msg.deleted);
+  
+  // 메시지만 필터
+  if (messageFilters.messagesOnly) {
+    filtered = filtered.filter(msg => 
+      !msg.type || 
+      msg.type === 'rule-change' || 
+      msg.type === 'leader-assigned' || 
+      msg.type === 'leader-removed' || 
+      msg.type === 'quiz-participation' ||
+      msg.type === 'random-result'
+    );
+  }
+  
+  // 나만/상대방만 필터
+  if (!messageFilters.showMine) {
+    filtered = filtered.filter(msg => msg.userId !== user.uid);
+  }
+  if (!messageFilters.showOthers) {
+    filtered = filtered.filter(msg => msg.userId === user.uid);
+  }
+  
+  // 최신순 정렬
+  if (messageFilters.latestFirst) {
+    filtered = [...filtered].reverse();
+  }
+  
+  return filtered;
+};
 
   const createFeedPost = () => {
     const content = prompt('Share something with the world:');
@@ -1640,7 +1697,7 @@ const sendMentionNotification = (messageId, mentionedUserName) => {
         {/* 모바일에서 숨김 */}
         <div className="hidden sm:flex items-center gap-1">
           <Sparkles className="w-3 h-3 text-yellow-400" />
-          <span className="text-xs text-gray-400 font-medium">Made By Unvul® Ver 2.0</span>
+          <span className="text-xs text-gray-400 font-medium">Made By Unvul® Ver 13.8</span>
         </div>
       </div>
     </div>
@@ -1682,48 +1739,46 @@ const sendMentionNotification = (messageId, mentionedUserName) => {
       </button>
     </nav>
 
-    {/* 우측 아이콘 - 모바일 최적화 */}
 <div className="flex items-center gap-1 md:gap-3">
-  {/* 기존 Bell 버튼 삭제하고 Friends 버튼으로 교체 */}
-<button 
-  onClick={() => {
-    setShowFriendModal(!showFriendModal);
-    // ✅ 모달 열 때 강제로 데이터 새로고침
-    if (!showFriendModal && user) {
-      window.firebase.database().ref(`userProfiles/${user.uid}/friendRequests`).once('value', (snapshot) => {
-        console.log('🔄 Force refresh friendRequests:', snapshot.val());
-      });
-    }
-  }}
-  className="hidden md:flex relative text-gray-400 hover:text-cyan-400 p-2 rounded-xl hover:bg-gray-700/50 transition-all items-center gap-1"
->
-  <Users className="w-5 h-5" />
-  {(friendRequests.length > 0 || sentRequests.length > 0) && (
-    <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-  )}
-</button>
+  {/* Friends 버튼 - 모바일에서도 보이도록 */}
+  <button 
+    onClick={() => {
+      setShowFriendModal(!showFriendModal);
+      if (!showFriendModal && user) {
+        window.firebase.database().ref(`userProfiles/${user.uid}/friendRequests`).once('value', (snapshot) => {
+          console.log('🔄 Force refresh friendRequests:', snapshot.val());
+        });
+      }
+    }}
+    className="relative text-gray-400 hover:text-cyan-400 p-1.5 md:p-2 rounded-xl hover:bg-gray-700/50 transition-all flex items-center gap-1"
+  >
+    <Users className="w-4 h-4 md:w-5 md:h-5" />
+    {(friendRequests.length > 0 || sentRequests.length > 0) && (
+      <span className="absolute top-0.5 right-0.5 md:top-1 md:right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+    )}
+  </button>
       
-      <button 
-        onClick={() => setShowUserSettings(true)}
-        className="text-gray-400 hover:text-cyan-400 p-1.5 md:p-2 rounded-xl hover:bg-gray-700/50 transition-all"
-      >
-        <Settings className="w-4 h-4 md:w-5 md:h-5" />
-      </button>
-      
-      {/* 프로필 이미지 크기 조정 */}
-      <div className="relative group">
-        <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-purple-500 rounded-full blur opacity-0 group-hover:opacity-75 transition"></div>
-        <img src={user.photo} alt={user.name} className="relative w-8 h-8 md:w-11 md:h-11 rounded-full border-2 border-cyan-400 shadow-lg" />
-        <div className="absolute -bottom-0.5 -right-0.5 md:-bottom-1 md:-right-1 w-3 h-3 md:w-4 md:h-4 bg-green-400 rounded-full border-2 border-gray-800"></div>
-      </div>
-      
-      <button
-        onClick={handleLogout}
-        className="text-gray-400 hover:text-red-400 hover:bg-gray-700/50 p-1.5 md:p-2.5 rounded-xl transition-all"
-      >
-        <LogOut className="w-4 h-4 md:w-5 md:h-5" />
-      </button>
-    </div>
+  <button 
+    onClick={() => setShowUserSettings(true)}
+    className="text-gray-400 hover:text-cyan-400 p-1.5 md:p-2 rounded-xl hover:bg-gray-700/50 transition-all"
+  >
+    <Settings className="w-4 h-4 md:w-5 md:h-5" />
+  </button>
+  
+  {/* 프로필 이미지 크기 조정 */}
+  <div className="relative group">
+    <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-purple-500 rounded-full blur opacity-0 group-hover:opacity-75 transition"></div>
+    <img src={user.photo} alt={user.name} className="relative w-8 h-8 md:w-11 md:h-11 rounded-full border-2 border-cyan-400 shadow-lg" />
+    <div className="absolute -bottom-0.5 -right-0.5 md:-bottom-1 md:-right-1 w-3 h-3 md:w-4 md:h-4 bg-green-400 rounded-full border-2 border-gray-800"></div>
+  </div>
+  
+  <button
+    onClick={handleLogout}
+    className="text-gray-400 hover:text-red-400 hover:bg-gray-700/50 p-1.5 md:p-2.5 rounded-xl transition-all"
+  >
+    <LogOut className="w-4 h-4 md:w-5 md:h-5" />
+  </button>
+</div>
   </div>
 </header>
       )}
@@ -1935,9 +1990,12 @@ const sendMentionNotification = (messageId, mentionedUserName) => {
 >
   <Search className="w-5 h-5" />
 </button>
-  <button className="p-2 hover:bg-gray-600 rounded-xl transition-all text-gray-400 hover:text-cyan-400">
-    <Filter className="w-5 h-5" />
-  </button>
+  <button 
+  onClick={() => setShowMessageManagement(!showMessageManagement)}
+  className="p-2 hover:bg-gray-600 rounded-xl transition-all text-gray-400 hover:text-cyan-400"
+>
+  <Filter className="w-5 h-5" />
+</button>
   {isLeader(selectedRoom) && (
     <button 
       onClick={() => setShowRoomSettings(true)}
@@ -2073,6 +2131,11 @@ const sendMentionNotification = (messageId, mentionedUserName) => {
       <X className="w-4 h-4" />
       <span className="font-black">{msg.targetUserName}</span>'s leader role has been removed
     </div>
+  </div>
+
+  ) : msg.deleted ? (
+  <div className="p-4 rounded-2xl bg-gray-700/50 text-gray-400 italic border border-gray-600">
+     * This message has been deleted *
   </div>
 
   ) : msg.type === 'random-picker' ? (
@@ -3598,6 +3661,188 @@ return (
           }
         }
       `}</style>
+
+     {/* Message Management Modal */}
+{showMessageManagement && selectedRoom && (
+  <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="bg-gray-800/95 backdrop-blur-xl rounded-2xl p-6 max-w-3xl w-full border-2 border-cyan-500/50 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+      <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-2xl opacity-20 blur"></div>
+      <div className="relative">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-black text-cyan-400 flex items-center gap-2">
+            <Filter className="w-6 h-6" />
+            Message Management
+            <Shield className="w-5 h-5 text-yellow-400" />
+          </h3>
+          <button
+            onClick={() => setShowMessageManagement(false)}
+            className="text-gray-400 hover:text-red-400 transition-all"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        {/* 필터 옵션들 */}
+        <div className="bg-gray-700/50 p-4 rounded-xl border border-cyan-500/30 mb-4">
+          <h4 className="font-bold text-cyan-300 mb-3 flex items-center gap-2">
+            <Settings className="w-5 h-5" />
+            Filters
+          </h4>
+          <div className="grid grid-cols-2 gap-3">
+            {/* 최신순 */}
+            <label className="flex items-center gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={messageFilters.latestFirst}
+                onChange={(e) => setMessageFilters(prev => ({
+                  ...prev,
+                  latestFirst: e.target.checked
+                }))}
+                className="w-5 h-5 rounded border-2 border-gray-500 bg-gray-600 checked:bg-cyan-500 checked:border-cyan-500 cursor-pointer transition-all"
+              />
+              <span className="text-sm font-bold text-gray-300 group-hover:text-cyan-400 transition-all flex items-center gap-1">
+                <Clock className="w-4 h-4" />
+                Latest First
+              </span>
+            </label>
+
+            {/* 메시지만 */}
+            <label className="flex items-center gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={messageFilters.messagesOnly}
+                onChange={(e) => setMessageFilters(prev => ({
+                  ...prev,
+                  messagesOnly: e.target.checked
+                }))}
+                className="w-5 h-5 rounded border-2 border-gray-500 bg-gray-600 checked:bg-cyan-500 checked:border-cyan-500 cursor-pointer transition-all"
+              />
+              <span className="text-sm font-bold text-gray-300 group-hover:text-cyan-400 transition-all flex items-center gap-1">
+                <MessageCircle className="w-4 h-4" />
+                Messages Only
+              </span>
+            </label>
+
+            {/* 나만 */}
+            <label className="flex items-center gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={messageFilters.showMine}
+                onChange={(e) => setMessageFilters(prev => ({
+                  ...prev,
+                  showMine: e.target.checked
+                }))}
+                className="w-5 h-5 rounded border-2 border-gray-500 bg-gray-600 checked:bg-cyan-500 checked:border-cyan-500 cursor-pointer transition-all"
+              />
+              <span className="text-sm font-bold text-gray-300 group-hover:text-cyan-400 transition-all flex items-center gap-1">
+                <Users className="w-4 h-4" />
+                Show Mine
+              </span>
+            </label>
+
+            {/* 상대방만 */}
+            <label className="flex items-center gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={messageFilters.showOthers}
+                onChange={(e) => setMessageFilters(prev => ({
+                  ...prev,
+                  showOthers: e.target.checked
+                }))}
+                className="w-5 h-5 rounded border-2 border-gray-500 bg-gray-600 checked:bg-cyan-500 checked:border-cyan-500 cursor-pointer transition-all"
+              />
+              <span className="text-sm font-bold text-gray-300 group-hover:text-cyan-400 transition-all flex items-center gap-1">
+                <Users className="w-4 h-4" />
+                Show Others
+              </span>
+            </label>
+          </div>
+
+          {/* 필터 요약 */}
+          <div className="mt-3 pt-3 border-t border-gray-600">
+            <div className="text-xs text-gray-400 flex items-center gap-2">
+              <TrendingUp className="w-3 h-3" />
+              <span>
+                Showing {getFilteredMessages().length} of {messages.filter(msg => !msg.deleted).length} messages
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 메시지 목록 */}
+        <div className="space-y-3">
+          {getFilteredMessages().length > 0 ? (
+            getFilteredMessages().map(msg => (
+              <div key={msg.id} className="bg-gray-700/50 p-4 rounded-xl border border-gray-600">
+                <div className="flex items-start gap-3">
+                  <img src={msg.userPhoto} alt={msg.userName} className="w-10 h-10 rounded-full border-2 border-cyan-400 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <span className="font-bold text-white text-sm">{msg.userName}</span>
+                      <span className="text-xs text-gray-400">
+                        {new Date(msg.timestamp).toLocaleString()}
+                      </span>
+                      {msg.userId === user.uid && (
+                        <span className="text-xs bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded-full">You</span>
+                      )}
+                    </div>
+                    
+                    {msg.type === 'drawing' ? (
+                      <div className="text-sm text-gray-300">🎨 Drawing</div>
+                    ) : msg.type === 'emoji' ? (
+                      <div className="text-sm text-gray-300">😀 Emoji: {msg.emoji} x{msg.count}</div>
+                    ) : msg.type === 'quiz' ? (
+                      <div className="text-sm text-gray-300">❓ Quiz: {msg.question}</div>
+                    ) : msg.type === 'random-picker' ? (
+                      <div className="text-sm text-gray-300">🎲 Random Picker</div>
+                    ) : (
+                      <div className="text-sm text-gray-300 break-words">{msg.text}</div>
+                    )}
+                  </div>
+                  
+                  <div className="flex gap-2 flex-shrink-0">
+                    {msg.text && (
+                      <button
+                        onClick={() => copyMessage(msg.text)}
+                        className="p-2 hover:bg-gray-600 rounded-lg transition-all text-gray-400 hover:text-cyan-400"
+                        title="Copy message"
+                      >
+                        <MessageSquare className="w-4 h-4" />
+                      </button>
+                    )}
+                    
+                    {msg.userId === user.uid && (
+                      <button
+                        onClick={() => deleteMyMessage(msg.id)}
+                        className="p-2 hover:bg-gray-600 rounded-lg transition-all text-gray-400 hover:text-red-400"
+                        title="Delete message"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-center py-8 text-gray-400">
+              <Filter className="w-16 h-16 mx-auto mb-2 opacity-50" />
+              <p className="font-bold">No messages match your filters</p>
+              <p className="text-sm">Try adjusting the filter settings</p>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={() => setShowMessageManagement(false)}
+          className="w-full mt-4 bg-gradient-to-r from-cyan-500 to-blue-600 text-white py-3 rounded-xl font-bold hover:shadow-xl hover:shadow-cyan-500/50 transition-all"
+        >
+          Done
+        </button>
+      </div>
+    </div>
+  </div>
+)}
       {/* Friend Modal */}
 {showFriendModal && (
   <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
