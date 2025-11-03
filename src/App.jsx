@@ -50,59 +50,105 @@ const TOOL_COOLDOWN = 5000; // 5초 쿨다운
 const [showMentionList, setShowMentionList] = useState(false);
 const [mentionSearch, setMentionSearch] = useState('');
 const [mentions, setMentions] = useState([]);
+const [showFriendModal, setShowFriendModal] = useState(false);
+const [friendSearchQuery, setFriendSearchQuery] = useState('');
+const [searchedUsers, setSearchedUsers] = useState([]);
+const [friends, setFriends] = useState([]);
+const [friendRequests, setFriendRequests] = useState([]);
+const [sentRequests, setSentRequests] = useState([]);
+const [friendModalTab, setFriendModalTab] = useState('friends-list');
 
   const emojis = ['😀', '😂', '❤️', '👍', '🎉', '🔥', '💯', '✨', '😎', '🤔', '😍', '🚀', '⭐', '💪', '🎮', '🎨'];
 
-  useEffect(() => {
+const [roomDataBuffer, setRoomDataBuffer] = useState({});
 
+useEffect(() => {
+  const timeoutId = setTimeout(() => {
+    if (Object.keys(roomDataBuffer).length > 0) {
+      setSelectedRoom(prev => ({
+        ...prev,
+        ...roomDataBuffer
+      }));
+      setRoomDataBuffer({});
+    }
+  }, 300);
+  
+  return () => clearTimeout(timeoutId);
+}, [roomDataBuffer]);
 
-
-
-    
-    const checkFirebase = setInterval(() => {
-      if (window.firebase) {
-        clearInterval(checkFirebase);
-        
-        const firebaseConfig = {
-          apiKey: "AIzaSyB2I_bmwVhb-0RO8ljvunDSa3K-TCSzt2E",
-          authDomain: "unvul-chat.firebaseapp.com",
-          databaseURL: "https://unvul-chat-default-rtdb.firebaseio.com",
-          projectId: "unvul-chat",
-          storageBucket: "unvul-chat.firebasestorage.app",
-          messagingSenderId: "347507903654",
-          appId: "1:347507903654:web:229feb94c52849c2183867",
-          measurementId: "G-GMRQMBM4X2"
-        };
-        
-        if (!window.firebase.apps.length) {
-          window.firebase.initializeApp(firebaseConfig);
-        }
-        
-        window.firebase.auth().onAuthStateChanged((user) => {
-          if (user) {
-            setUser({
-              uid: user.uid,
-              name: user.displayName,
-              email: user.email,
-              photo: user.photoURL
-            });
+useEffect(() => {
+  const checkFirebase = setInterval(() => {
+    if (window.firebase) {
+      clearInterval(checkFirebase);
+      
+      const firebaseConfig = {
+        apiKey: "AIzaSyB2I_bmwVhb-0RO8ljvunDSa3K-TCSzt2E",
+        authDomain: "unvul-chat.firebaseapp.com",
+        databaseURL: "https://unvul-chat-default-rtdb.firebaseio.com",
+        projectId: "unvul-chat",
+        storageBucket: "unvul-chat.firebasestorage.app",
+        messagingSenderId: "347507903654",
+        appId: "1:347507903654:web:229feb94c52849c2183867",
+        measurementId: "G-GMRQMBM4X2"
+      };
+      
+      if (!window.firebase.apps.length) {
+        window.firebase.initializeApp(firebaseConfig);
+      }
+      
+      const unsubscribe = window.firebase.auth().onAuthStateChanged((user) => {
+        if (user) {
+          setUser({
+            uid: user.uid,
+            name: user.displayName,
+            email: user.email,
+            photo: user.photoURL
+          });
+          
+          const userProfileRef = window.firebase.database().ref(`userProfiles/${user.uid}`);
+          userProfileRef.set({
+            name: user.displayName,
+            email: user.email,
+            photo: user.photoURL,
+            lastActive: Date.now()
+          }).then(() => {
+            console.log('✅ UserProfile registered for:', user.displayName);
             loadRooms();
             loadFeedPosts();
             loadCommunityPosts();
-          } else {
-            setUser(null);
-          }
-        });
-      }
-    }, 100);
+            loadFriends();
+          }).catch(error => {
+            console.error('❌ UserProfile registration failed:', error);
+          });
+          
+          const updateInterval = setInterval(() => {
+            userProfileRef.update({ lastActive: Date.now() });
+          }, 60000);
+          
+          return () => {
+            clearInterval(updateInterval);
+          };
+        } else {
+          setUser(null);
+          setFriends([]);
+          setFriendRequests([]);
+          setSentRequests([]);
+        }
+      });
+      
+      return () => {
+        unsubscribe();
+      };
+    }
+  }, 100);
 
-    return () => clearInterval(checkFirebase);
-  }, []);
+  return () => clearInterval(checkFirebase);
+}, []);
 
 useEffect(() => {
   if (selectedRoom && user) {
     const messagesRef = window.firebase.database().ref(`rooms/${selectedRoom.id}/messages`);
-    messagesRef.on('value', (snapshot) => {
+    messagesRef.orderByChild('timestamp').limitToLast(100).on('value', (snapshot) => {
       const data = snapshot.val();
       if (data) {
         const messagesList = Object.keys(data).map(key => ({
@@ -120,37 +166,21 @@ useEffect(() => {
     const bannedWordsRef = window.firebase.database().ref(`rooms/${selectedRoom.id}/bannedWords`);
     const leadersRef = window.firebase.database().ref(`rooms/${selectedRoom.id}/leaders`);
 
-    // 한 번에 모든 데이터 수집
-    let roomData = {};
-    
-    // 👇 함수를 먼저 선언!
-    const updateRoom = () => {
-      if (roomData.members || roomData.rules || roomData.bannedWords || roomData.leaders) {
-        setSelectedRoom(prev => ({
-          ...prev,
-          ...roomData
-        }));
-      }
-    };
-
+    // 👇 updateRoom 함수 삭제하고 직접 setRoomDataBuffer 사용
     membersRef.on('value', (snapshot) => {
-      roomData.members = snapshot.val();
-      updateRoom();
+      setRoomDataBuffer(prev => ({ ...prev, members: snapshot.val() }));
     });
 
     rulesRef.on('value', (snapshot) => {
-      roomData.rules = snapshot.val() || {chat: {}, drawing: {}, emoji: {}, quiz: {}, random: {}};
-      updateRoom();
+      setRoomDataBuffer(prev => ({ ...prev, rules: snapshot.val() || {chat: {}, drawing: {}, emoji: {}, quiz: {}, random: {}} }));
     });
 
     bannedWordsRef.on('value', (snapshot) => {
-      roomData.bannedWords = snapshot.val() || [];
-      updateRoom();
+      setRoomDataBuffer(prev => ({ ...prev, bannedWords: snapshot.val() || [] }));
     });
 
     leadersRef.on('value', (snapshot) => {
-      roomData.leaders = snapshot.val() || {};
-      updateRoom();
+      setRoomDataBuffer(prev => ({ ...prev, leaders: snapshot.val() || {} }));
     });
 
     return () => {
@@ -216,10 +246,10 @@ useEffect(() => {
     myOnlineRef.onDisconnect().set(false);
     myLastSeenRef.onDisconnect().set(Date.now());  // ← 추가
    
-    // 30초마다 lastSeen 업데이트
-    const interval = setInterval(() => {
-      myLastSeenRef.set(Date.now());
-    }, 30000);
+// 30초마다 lastSeen 업데이트
+const interval = setInterval(() => {
+  myLastSeenRef.set(Date.now());
+}, 60000); // 30초 → 60초로 변경
    
     return () => {
       clearInterval(interval);  // ← 추가
@@ -228,6 +258,18 @@ useEffect(() => {
     };
   }
 }, [selectedRoom, user]);
+
+// checkUserOnlineStatus를 주기적으로 업데이트
+useEffect(() => {
+  if (!showFriendModal) return;
+  
+  const interval = setInterval(() => {
+    // Friend 목록 강제 리렌더링 (온라인 상태 업데이트)
+    setFriends(prev => [...prev]);
+  }, 10000); // 10초마다
+  
+  return () => clearInterval(interval);
+}, [showFriendModal]);
 
 // 멘션 알림 리스너
 useEffect(() => {
@@ -294,6 +336,40 @@ useEffect(() => {
       }
     });
   };
+
+// 기존 문제: 리스너가 중복 등록되고, off()로 제대로 정리 안됨
+// 위치: loadFriends 함수 전체
+
+const loadFriends = () => {
+  if (!user) return;
+  
+  const friendsRef = window.firebase.database().ref(`userProfiles/${user.uid}/friends`);
+  const requestsRef = window.firebase.database().ref(`userProfiles/${user.uid}/friendRequests`);
+  const sentRef = window.firebase.database().ref(`userProfiles/${user.uid}/sentRequests`);
+  
+  // ✅ 기존 리스너 완전히 제거
+  friendsRef.off();
+  requestsRef.off();
+  sentRef.off();
+  
+  // ✅ 친구 목록
+  friendsRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    setFriends(data ? Object.keys(data).map(key => ({ uid: key, ...data[key] })) : []);
+  });
+  
+  // ✅ 받은 요청
+  requestsRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    setFriendRequests(data ? Object.keys(data).map(key => ({ uid: key, ...data[key] })) : []);
+  });
+  
+  // ✅ 보낸 요청
+  sentRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    setSentRequests(data ? Object.keys(data).map(key => ({ uid: key, ...data[key] })) : []);
+  });
+};
 
   const handleGoogleLogin = async () => {
     try {
@@ -437,8 +513,10 @@ useEffect(() => {
       setOnlineCount(count);
     }
   };
+
+
   
-  const interval = setInterval(updateOnlineCount, 10000);
+const interval = setInterval(updateOnlineCount, 30000); // 10초 → 30초로 변경
   updateOnlineCount();
   
   return () => clearInterval(interval);
@@ -461,8 +539,8 @@ useEffect(() => {
   
   calculateOnlineUsers();
   
-  // 5초마다만 업데이트 (깜빡임 방지)
-  const interval = setInterval(calculateOnlineUsers, 5000);
+  // 5초마다만 업데이트 (깜빡임 방지)// 5초마다만 업데이트 (깜빡임 방지)
+const interval = setInterval(calculateOnlineUsers, 10000); // 5초 → 10초로 변경
   
   return () => clearInterval(interval);
 }, [selectedRoom?.id]); // members 의존성 제거!
@@ -512,14 +590,19 @@ const registerMember = (roomId) => {
     photo: user.photo,
     joinedAt: Date.now(),
     online: true,
-    lastSeen: Date.now()  // ← 추가
+    lastSeen: Date.now()
   });
   
-  // onDisconnect 설정
+  // ✅ 추가: userProfiles도 함께 업데이트
+  window.firebase.database().ref(`userProfiles/${user.uid}`).update({
+    name: user.name,
+    photo: user.photo,
+    lastActive: Date.now()
+  });
+  
   const onlineRef = window.firebase.database().ref(`rooms/${roomId}/members/${user.uid}/online`);
   onlineRef.onDisconnect().set(false);
   
-  // lastSeen도 onDisconnect 설정 추가
   const lastSeenRef = window.firebase.database().ref(`rooms/${roomId}/members/${user.uid}/lastSeen`);
   lastSeenRef.onDisconnect().set(Date.now());
 };
@@ -684,6 +767,175 @@ const isCreator = (room) => {
 
 const canAssignLeader = (room) => {
   return isCreator(room);
+};
+
+const searchUsers = async (query) => {
+  if (!query.trim()) {
+    setSearchedUsers([]);
+    return;
+  }
+  
+  // ✅ @ 기호 제거
+  const cleanQuery = query.replace('@', '').trim().toLowerCase();
+  
+  console.log('🔍 Searching for:', cleanQuery);
+  
+  const usersRef = window.firebase.database().ref('userProfiles');
+  usersRef.once('value', (snapshot) => {
+    const data = snapshot.val();
+    console.log('📦 User profiles data:', data);
+    
+    if (data) {
+      const usersList = Object.keys(data)
+        .filter(uid => uid !== user.uid) // 자기 자신 제외
+        .map(uid => ({
+          uid: uid,
+          ...data[uid]
+        }))
+        .filter(u => {
+          // ✅ 이름 또는 이메일에서 @ 제거하고 검색
+          const userName = (u.name || '').toLowerCase();
+          const userEmail = (u.email || '').toLowerCase();
+          return userName.includes(cleanQuery) || userEmail.includes(cleanQuery);
+        });
+      
+      console.log('✅ Found users:', usersList);
+      setSearchedUsers(usersList);
+    } else {
+      console.log('⚠️ No user profiles found in database');
+      setSearchedUsers([]);
+    }
+  }).catch((error) => {
+    console.error('❌ Search error:', error);
+    setSearchedUsers([]);
+  });
+};
+
+const sendFriendRequest = async (targetUser) => {
+  try {
+    // ✅ 중복 체크 먼저
+    const sentSnapshot = await window.firebase.database()
+      .ref(`userProfiles/${user.uid}/sentRequests/${targetUser.uid}`)
+      .once('value');
+    
+    if (sentSnapshot.exists()) {
+      showToast('⚠️ Request already sent!', 'info');
+      return;
+    }
+    
+    const friendSnapshot = await window.firebase.database()
+      .ref(`userProfiles/${user.uid}/friends/${targetUser.uid}`)
+      .once('value');
+    
+    if (friendSnapshot.exists()) {
+      showToast('⚠️ Already friends!', 'info');
+      return;
+    }
+    
+    // ✅ 원자적 업데이트
+    const updates = {};
+    const timestamp = Date.now();
+    
+    updates[`userProfiles/${user.uid}/sentRequests/${targetUser.uid}`] = {
+      uid: targetUser.uid,
+      name: targetUser.name,
+      photo: targetUser.photo,
+      email: targetUser.email,
+      timestamp: timestamp
+    };
+    
+    updates[`userProfiles/${targetUser.uid}/friendRequests/${user.uid}`] = {
+      uid: user.uid,
+      name: user.name,
+      photo: user.photo,
+      email: user.email,
+      timestamp: timestamp
+    };
+    
+    await window.firebase.database().ref().update(updates);
+    
+    showToast(`✅ Friend request sent to ${targetUser.name}!`, 'success');
+    
+  } catch (error) {
+    console.error('❌ sendFriendRequest error:', error);
+    showToast('❌ Failed to send request', 'error');
+  }
+};
+
+const acceptFriendRequest = async (requester) => {
+  try {
+    const updates = {};
+    const timestamp = Date.now();
+    
+    // ✅ 친구 추가
+    updates[`userProfiles/${user.uid}/friends/${requester.uid}`] = {
+      name: requester.name,
+      photo: requester.photo,
+      email: requester.email,
+      addedAt: timestamp
+    };
+    
+    updates[`userProfiles/${requester.uid}/friends/${user.uid}`] = {
+      name: user.name,
+      photo: user.photo,
+      email: user.email,
+      addedAt: timestamp
+    };
+    
+    // ✅ 요청 삭제
+    updates[`userProfiles/${user.uid}/friendRequests/${requester.uid}`] = null;
+    updates[`userProfiles/${requester.uid}/sentRequests/${user.uid}`] = null;
+    
+    await window.firebase.database().ref().update(updates);
+    
+    showToast(`✅ ${requester.name} is now your friend!`, 'success');
+    
+  } catch (error) {
+    console.error('❌ acceptFriendRequest error:', error);
+    showToast('❌ Failed to accept request', 'error');
+  }
+};
+
+const rejectFriendRequest = async (requester) => {
+  try {
+    await window.firebase.database().ref(`userProfiles/${user.uid}/friendRequests/${requester.uid}`).remove();
+    await window.firebase.database().ref(`userProfiles/${requester.uid}/sentRequests/${user.uid}`).remove();
+    
+    showToast(`❌ Friend request from ${requester.name} rejected`, 'info');
+  } catch (error) {
+    console.error('❌ Reject friend error:', error);
+  }
+};
+
+
+const removeFriend = async (friendUid, friendName) => {
+  try {
+    await window.firebase.database().ref(`userProfiles/${user.uid}/friends/${friendUid}`).remove();
+    await window.firebase.database().ref(`userProfiles/${friendUid}/friends/${user.uid}`).remove();
+    
+    showToast(`🚫 ${friendName} removed from friends`, 'info');
+  } catch (error) {
+    console.error('❌ Remove friend error:', error);
+  }
+};
+
+const checkUserOnlineStatus = (friendUid) => {
+  if (!rooms || rooms.length === 0) return false;
+  
+  // ✅ 모든 방을 체크해서 온라인 상태 확인
+  for (let room of rooms) {
+    if (room.members && room.members[friendUid]) {
+      const member = room.members[friendUid];
+      // online이 true이고 lastSeen이 5분 이내인 경우만 온라인으로 표시
+      if (member.online === true && 
+          member.lastSeen && 
+          (Date.now() - member.lastSeen) < 300000) { // 5분
+        return true;
+      }
+    }
+  }
+  
+  return false;
 };
 
 const sendMessage = () => {
@@ -1385,7 +1637,7 @@ const sendMentionNotification = (messageId, mentionedUserName) => {
         {/* 모바일에서 숨김 */}
         <div className="hidden sm:flex items-center gap-1">
           <Sparkles className="w-3 h-3 text-yellow-400" />
-          <span className="text-xs text-gray-400 font-medium">Made By Unvul® Ver 2.0</span>
+          <span className="text-xs text-gray-400 font-medium">Made By Unvul® Ver 13.8</span>
         </div>
       </div>
     </div>
@@ -1428,15 +1680,25 @@ const sendMentionNotification = (messageId, mentionedUserName) => {
     </nav>
 
     {/* 우측 아이콘 - 모바일 최적화 */}
-    <div className="flex items-center gap-1 md:gap-3">
-      {/* 모바일에서 알림/검색 숨김 */}
-      <button 
-        onClick={() => setShowSearch(!showSearch)}
-        className="hidden md:block relative text-gray-400 hover:text-cyan-400 p-2 rounded-xl hover:bg-gray-700/50 transition-all"
-      >
-        <Bell className="w-5 h-5" />
-        <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-      </button>
+<div className="flex items-center gap-1 md:gap-3">
+  {/* 기존 Bell 버튼 삭제하고 Friends 버튼으로 교체 */}
+<button 
+  onClick={() => {
+    setShowFriendModal(!showFriendModal);
+    // ✅ 모달 열 때 강제로 데이터 새로고침
+    if (!showFriendModal && user) {
+      window.firebase.database().ref(`userProfiles/${user.uid}/friendRequests`).once('value', (snapshot) => {
+        console.log('🔄 Force refresh friendRequests:', snapshot.val());
+      });
+    }
+  }}
+  className="hidden md:flex relative text-gray-400 hover:text-cyan-400 p-2 rounded-xl hover:bg-gray-700/50 transition-all items-center gap-1"
+>
+  <Users className="w-5 h-5" />
+  {(friendRequests.length > 0 || sentRequests.length > 0) && (
+    <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+  )}
+</button>
       
       <button 
         onClick={() => setShowUserSettings(true)}
@@ -3333,6 +3595,306 @@ return (
           }
         }
       `}</style>
+      {/* Friend Modal */}
+{showFriendModal && (
+  <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="bg-gray-800/95 backdrop-blur-xl rounded-2xl p-6 max-w-2xl w-full border-2 border-cyan-500/50 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+      <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-2xl opacity-20 blur"></div>
+      <div className="relative">
+       <div className="flex items-center justify-between mb-4">
+  <h3 className="text-xl font-black text-cyan-400 flex items-center gap-2">
+    <Users className="w-6 h-6" />
+    Friends
+    {(friendRequests.length > 0 || sentRequests.length > 0) && (
+      <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full">
+        {friendRequests.length + sentRequests.length}
+      </span>
+    )}
+  </h3>
+  <div className="flex items-center gap-2">
+    {/* ✅ 새로고침 버튼 추가 */}
+    <button
+      onClick={() => {
+        loadFriends();
+        showToast('🔄 Refreshed!', 'success');
+      }}
+      className="p-2 hover:bg-gray-700 rounded-xl transition-all text-gray-400 hover:text-cyan-400"
+    >
+      <TrendingUp className="w-5 h-5" />
+    </button>
+    <button
+      onClick={() => {
+        setShowFriendModal(false);
+        setFriendSearchQuery('');
+        setSearchedUsers([]);
+        setFriendModalTab('friends-list');
+      }}
+      className="text-gray-400 hover:text-red-400 transition-all"
+    >
+      <X className="w-6 h-6" />
+    </button>
+  </div>
+</div>
+
+        {/* 탭 */}
+        <div className="flex gap-2 mb-4 border-b border-gray-700 pb-2">
+          <button
+            onClick={() => setFriendModalTab('friends-list')}
+            className={`px-4 py-2 rounded-lg font-bold transition-all ${
+              friendModalTab === 'friends-list'
+                ? 'bg-cyan-500 text-white'
+                : 'text-gray-400 hover:bg-gray-700'
+            }`}
+          >
+            My Friends ({friends.length})
+          </button>
+          <button
+  onClick={() => setFriendModalTab('friend-requests')} 
+            className={`px-4 py-2 rounded-lg font-bold transition-all relative ${
+              friendModalTab === 'friend-requests'
+                ? 'bg-purple-500 text-white'
+                : 'text-gray-400 hover:bg-gray-700'
+            }`}
+          >
+            Requests ({friendRequests.length})
+            {friendRequests.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
+            )}
+          </button>
+          <button
+  onClick={() => setFriendModalTab('add-friend')}  // ✅ 수정
+            className={`px-4 py-2 rounded-lg font-bold transition-all ${
+              friendModalTab === 'add-friend'
+                ? 'bg-green-500 text-white'
+                : 'text-gray-400 hover:bg-gray-700'
+            }`}
+          >
+            Add Friend
+          </button>
+        </div>
+
+        {/* My Friends */}
+        {friendModalTab === 'friends-list' && (
+          <div className="space-y-2">
+            {friends.length > 0 ? (
+              friends.map(friend => {
+                const isOnline = checkUserOnlineStatus(friend.uid);
+                return (
+                  <div key={friend.uid} className="bg-gray-700/50 p-4 rounded-xl flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <img src={friend.photo} alt={friend.name} className="w-12 h-12 rounded-full border-2 border-cyan-400" />
+                        <div className={`absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-gray-800 ${
+                          isOnline ? 'bg-green-400' : 'bg-gray-400'
+                        }`}></div>
+                      </div>
+                      <div>
+                        <div className="font-bold text-white flex items-center gap-2">
+                          {friend.name}
+                          <Star className="w-4 h-4 text-yellow-400" />
+                        </div>
+                        <div className="text-xs text-gray-400 flex items-center gap-1">
+                          {isOnline ? (
+                            <>
+                              <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                              Online
+                            </>
+                          ) : (
+                            <>
+                              <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                              Offline
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => removeFriend(friend.uid, friend.name)}
+                      className="bg-red-500/20 text-red-300 px-4 py-2 rounded-lg text-sm font-bold hover:bg-red-500/30 transition-all border border-red-500/50"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="text-center py-8 text-gray-400">
+                <Users className="w-16 h-16 mx-auto mb-2 opacity-50" />
+                <p className="font-bold">No friends yet</p>
+                <p className="text-sm">Add friends to get started!</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Friend Requests */}
+        {friendModalTab === 'friend-requests' && (
+          <div className="space-y-4">
+            {friendRequests.length > 0 ? (
+              <>
+                <h4 className="font-bold text-purple-300 flex items-center gap-2">
+                  <Bell className="w-5 h-5" />
+                  Incoming Requests
+                </h4>
+                {friendRequests.map(request => (
+                  <div key={request.uid} className="bg-purple-900/30 p-4 rounded-xl flex items-center justify-between border border-purple-500/30">
+                    <div className="flex items-center gap-3">
+                      <img src={request.photo} alt={request.name} className="w-12 h-12 rounded-full border-2 border-purple-400" />
+                      <div>
+                        <div className="font-bold text-white">{request.name}</div>
+                        <div className="text-xs text-gray-400">{request.email}</div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => acceptFriendRequest(request)}
+                        className="bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-green-600 transition-all"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        onClick={() => rejectFriendRequest(request)}
+                        className="bg-gray-600 text-gray-300 px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-500 transition-all"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <div className="text-center py-8 text-gray-400">
+                <Bell className="w-16 h-16 mx-auto mb-2 opacity-50" />
+                <p className="font-bold">No pending requests</p>
+              </div>
+            )}
+
+            {sentRequests.length > 0 && (
+              <>
+                <h4 className="font-bold text-yellow-300 flex items-center gap-2 mt-6">
+                  <Clock className="w-5 h-5" />
+                  Sent Requests
+                </h4>
+                {sentRequests.map(request => (
+                  <div key={request.uid} className="bg-gray-700/50 p-4 rounded-xl flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <img src={request.photo} alt={request.name} className="w-12 h-12 rounded-full border-2 border-yellow-400" />
+                      <div>
+                        <div className="font-bold text-white">{request.name}</div>
+                        <div className="text-xs text-yellow-400">Waiting for response...</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Add Friend */}
+        {friendModalTab === 'add-friend' && (
+          <div className="space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+             <input
+  type="text"
+  value={friendSearchQuery}
+  onChange={(e) => {
+    setFriendSearchQuery(e.target.value);
+    searchUsers(e.target.value);
+  }}
+  placeholder="Search users by name or @name or email..."  // ✅ 수정
+  className="w-full pl-10 pr-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl focus:border-cyan-500 focus:outline-none transition-all"
+  autoFocus
+/>
+            </div>
+
+            {searchedUsers.length > 0 ? (
+              <div className="space-y-2">
+                {searchedUsers.map(searchUser => {
+                  const isFriend = friends.find(f => f.uid === searchUser.uid);
+                  const hasSentRequest = sentRequests.find(r => r.uid === searchUser.uid);
+                  const hasReceivedRequest = friendRequests.find(r => r.uid === searchUser.uid);
+                  const isOnline = checkUserOnlineStatus(searchUser.uid);
+                  
+                  return (
+                    <div key={searchUser.uid} className="bg-gray-700/50 p-4 rounded-xl flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <img src={searchUser.photo} alt={searchUser.name} className="w-12 h-12 rounded-full border-2 border-cyan-400" />
+                          <div className={`absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-gray-800 ${
+                            isOnline ? 'bg-green-400' : 'bg-gray-400'
+                          }`}></div>
+                        </div>
+                        <div>
+                          <div className="font-bold text-white">{searchUser.name}</div>
+                          <div className="text-xs text-gray-400 flex items-center gap-2">
+                            {searchUser.email}
+                            {isOnline && (
+                              <span className="text-green-400 flex items-center gap-1">
+                                <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                                Online
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      {isFriend ? (
+                        <span className="text-cyan-400 font-bold text-sm flex items-center gap-1">
+                          <Star className="w-4 h-4" />
+                          Already Friends
+                        </span>
+                      ) : hasSentRequest ? (
+                        <span className="text-yellow-400 font-bold text-sm flex items-center gap-1">
+                          <Clock className="w-4 h-4" />
+                          Request Sent
+                        </span>
+                      ) : hasReceivedRequest ? (
+                        <button
+                          onClick={() => acceptFriendRequest(searchUser)}
+                          className="bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-green-600 transition-all"
+                        >
+                          Accept Request
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => sendFriendRequest(searchUser)}
+                          className="bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:shadow-lg transition-all"
+                        >
+                          Add Friend
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+) : friendSearchQuery ? (
+  <div className="text-center py-8 text-gray-400">
+    <Search className="w-16 h-16 mx-auto mb-2 opacity-50" />
+    <p className="font-bold">No users found for "{friendSearchQuery}"</p>
+    <p className="text-sm">Try searching by name (with or without @) or email</p>
+    {/* ✅ 디버깅용 추가 */}
+    <button
+      onClick={() => {
+        window.firebase.database().ref('userProfiles').once('value', (snapshot) => {
+          console.log('All userProfiles:', snapshot.val());
+          alert('Check console for all users');
+        });
+      }}
+      className="mt-3 text-xs text-cyan-400 underline"
+    >
+      Debug: Show all profiles
+    </button>
+  </div>
+) : null}
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+
+{/* Toast Notification */}
       {/* Toast Notification */}
 {toast && (
   <div className="fixed top-20 right-4 z-50 animate-in slide-in-from-top-4">
