@@ -76,7 +76,6 @@ useEffect(() => {
   return () => clearTimeout(timeoutId);
 }, [roomDataBuffer]);
 
-<<<<<<< HEAD
 useEffect(() => {
   const checkFirebase = setInterval(() => {
     if (window.firebase) {
@@ -114,38 +113,6 @@ useEffect(() => {
             lastActive: Date.now()
           }).then(() => {
             console.log('✅ UserProfile registered for:', user.displayName);
-=======
-
-
-    
-    const checkFirebase = setInterval(() => {
-      if (window.firebase) {
-        clearInterval(checkFirebase);
-        
-        const firebaseConfig = {
-          apiKey: "AIzaSyB2I_bmwVhb-0RO8ljvunDSa3K-TCSzt2E",
-          authDomain: "unvul-chat.web.app",
-          databaseURL: "https://unvul-chat-default-rtdb.firebaseio.com",
-          projectId: "unvul-chat",
-          storageBucket: "unvul-chat.firebasestorage.app",
-          messagingSenderId: "347507903654",
-          appId: "1:347507903654:web:229feb94c52849c2183867",
-          measurementId: "G-GMRQMBM4X2"
-        };
-        
-        if (!window.firebase.apps.length) {
-          window.firebase.initializeApp(firebaseConfig);
-        }
-        
-        window.firebase.auth().onAuthStateChanged((user) => {
-          if (user) {
-            setUser({
-              uid: user.uid,
-              name: user.displayName,
-              email: user.email,
-              photo: user.photoURL
-            });
->>>>>>> 35979cfe26ccb6621adb64bdfe7e43c2b613fc77
             loadRooms();
             loadFeedPosts();
             loadCommunityPosts();
@@ -369,9 +336,6 @@ useEffect(() => {
       }
     });
   };
-
-// 기존 문제: 리스너가 중복 등록되고, off()로 제대로 정리 안됨
-// 위치: loadFriends 함수 전체
 
 const loadFriends = () => {
   if (!user) return;
@@ -844,6 +808,9 @@ const searchUsers = async (query) => {
   });
 };
 
+// 기존 문제: 동시 요청 시 덮어쓰기 가능
+// 위치: sendFriendRequest 함수
+
 const sendFriendRequest = async (targetUser) => {
   try {
     // ✅ 중복 체크 먼저
@@ -894,6 +861,9 @@ const sendFriendRequest = async (targetUser) => {
     showToast('❌ Failed to send request', 'error');
   }
 };
+
+// 기존 문제: 여러 단계로 나뉘어 실패 시 데이터 불일치
+// 위치: acceptFriendRequest 함수
 
 const acceptFriendRequest = async (requester) => {
   try {
@@ -1670,7 +1640,7 @@ const sendMentionNotification = (messageId, mentionedUserName) => {
         {/* 모바일에서 숨김 */}
         <div className="hidden sm:flex items-center gap-1">
           <Sparkles className="w-3 h-3 text-yellow-400" />
-          <span className="text-xs text-gray-400 font-medium">Made By Unvul® Ver 13.8</span>
+          <span className="text-xs text-gray-400 font-medium">Made By Unvul® Ver 2.0</span>
         </div>
       </div>
     </div>
@@ -3634,17 +3604,17 @@ return (
     <div className="bg-gray-800/95 backdrop-blur-xl rounded-2xl p-6 max-w-2xl w-full border-2 border-cyan-500/50 shadow-2xl relative max-h-[90vh] overflow-y-auto">
       <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-2xl opacity-20 blur"></div>
       <div className="relative">
-       <div className="flex items-center justify-between mb-4">
-  <h3 className="text-xl font-black text-cyan-400 flex items-center gap-2">
-    <Users className="w-6 h-6" />
-    Friends
-    {(friendRequests.length > 0 || sentRequests.length > 0) && (
-      <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full">
-        {friendRequests.length + sentRequests.length}
-      </span>
-    )}
-  </h3>
-  <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-black text-cyan-400 flex items-center gap-2">
+            <Users className="w-6 h-6" />
+            Friends
+            {(friendRequests.length > 0 || sentRequests.length > 0) && (
+              <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full">
+                {friendRequests.length + sentRequests.length}
+              </span>
+            )}
+          </h3>
+         <div className="flex items-center gap-2">
     {/* ✅ 새로고침 버튼 추가 */}
     <button
       onClick={() => {
