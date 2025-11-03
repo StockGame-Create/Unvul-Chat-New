@@ -65,7 +65,7 @@ const [mentions, setMentions] = useState([]);
         
         const firebaseConfig = {
           apiKey: "AIzaSyB2I_bmwVhb-0RO8ljvunDSa3K-TCSzt2E",
-          authDomain: "unvul-chat.firebaseapp.com",
+          authDomain: "unvul-chat.web.app"
           databaseURL: "https://unvul-chat-default-rtdb.firebaseio.com",
           projectId: "unvul-chat",
           storageBucket: "unvul-chat.firebasestorage.app",
