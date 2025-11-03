@@ -76,6 +76,7 @@ useEffect(() => {
   return () => clearTimeout(timeoutId);
 }, [roomDataBuffer]);
 
+<<<<<<< HEAD
 useEffect(() => {
   const checkFirebase = setInterval(() => {
     if (window.firebase) {
@@ -113,6 +114,38 @@ useEffect(() => {
             lastActive: Date.now()
           }).then(() => {
             console.log('✅ UserProfile registered for:', user.displayName);
+=======
+
+
+    
+    const checkFirebase = setInterval(() => {
+      if (window.firebase) {
+        clearInterval(checkFirebase);
+        
+        const firebaseConfig = {
+          apiKey: "AIzaSyB2I_bmwVhb-0RO8ljvunDSa3K-TCSzt2E",
+          authDomain: "unvul-chat.web.app",
+          databaseURL: "https://unvul-chat-default-rtdb.firebaseio.com",
+          projectId: "unvul-chat",
+          storageBucket: "unvul-chat.firebasestorage.app",
+          messagingSenderId: "347507903654",
+          appId: "1:347507903654:web:229feb94c52849c2183867",
+          measurementId: "G-GMRQMBM4X2"
+        };
+        
+        if (!window.firebase.apps.length) {
+          window.firebase.initializeApp(firebaseConfig);
+        }
+        
+        window.firebase.auth().onAuthStateChanged((user) => {
+          if (user) {
+            setUser({
+              uid: user.uid,
+              name: user.displayName,
+              email: user.email,
+              photo: user.photoURL
+            });
+>>>>>>> 35979cfe26ccb6621adb64bdfe7e43c2b613fc77
             loadRooms();
             loadFeedPosts();
             loadCommunityPosts();
