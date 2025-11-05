@@ -25,6 +25,13 @@ const [newDisplayName, setNewDisplayName] = useState('');
   const [selectedDM, setSelectedDM] = useState(null); // { id, peer }
   const [dmSortBy, setDmSortBy] = useState('online'); // 'online' | 'latest' | 'name'
   const [selectedEmojis, setSelectedEmojis] = useState({});
+  // ✅ Jitsi 화상 통화 관련 State 추가
+const [showVideoCall, setShowVideoCall] = useState(false);
+const [jitsiContainer, setJitsiContainerId] = useState(null);
+
+// ✅ State 추가 (상단 근처)
+const [activeVideoCall, setActiveVideoCall] = useState(null); // 진행 중인 통화 정보
+const [jitsiRoomName, setJitsiRoomName] = useState(null);
 
   // 친구 DM 토글/목록 (추가)
   const [roomListMode, setRoomListMode] = useState('rooms'); // 'rooms' | 'dm'
@@ -77,6 +84,33 @@ const openDirectMessage = async (friend) => {
       bannedWords: []
     });
   }
+
+  // ✅ 통화 감지 함수 추가
+useEffect(() => {
+  if (!selectedRoom || !user) return;
+
+  const activeCalls = window.firebase.database()
+    .ref(`rooms/${selectedRoom.id}/activeCalls`);
+  
+  activeCalls.on('value', (snapshot) => {
+    const calls = snapshot.val();
+    if (calls) {
+      const callArray = Object.values(calls);
+      const latestCall = callArray[callArray.length - 1];
+      
+      if (latestCall) {
+        setActiveVideoCall(latestCall);
+        setJitsiRoomName(`unvul-${selectedRoom.id}-${latestCall.startedAt}`);
+      }
+    } else {
+      setActiveVideoCall(null);
+      setJitsiRoomName(null);
+    }
+  });
+
+  return () => activeCalls.off();
+}, [selectedRoom?.id, user]);
+
   
   // 메타데이터 저장
   const now = Date.now();
@@ -183,7 +217,7 @@ useEffect(() => {
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [pendingRoom, setPendingRoom] = useState(null);
   const [roomPassword, setRoomPassword] = useState('');
-  const [feedPosts, setFeedPosts] = useState([]);
+
   const [communityPosts, setCommunityPosts] = useState([]);
   const [showDrawing, setShowDrawing] = useState(false);
   const [showQuizModal, setShowQuizModal] = useState(false);
@@ -223,6 +257,33 @@ const [translateApiUrl, setTranslateApiUrl] = useState(
 const [translateApiKey, setTranslateApiKey] = useState(
   localStorage.getItem('translateApiKey') || (import.meta.env.VITE_TRANSLATE_API_KEY || '')
 );
+// Feed 관련 states 추가
+const [feedPosts, setFeedPosts] = useState([]);
+const [showFeedModal, setShowFeedModal] = useState(false);
+const [feedContent, setFeedContent] = useState('');
+const [feedImages, setFeedImages] = useState([]);
+const [feedDesign, setFeedDesign] = useState('default'); // 'default', 'dark', 'gradient', 'minimal'
+const [feedTags, setFeedTags] = useState('');
+const [feedTailComments, setFeedTailComments] = useState([]); // 말꼬리
+const [newTailComment, setNewTailComment] = useState('');
+const [tailCommentImage, setTailCommentImage] = useState(null);
+const [expandedFeedId, setExpandedFeedId] = useState(null);
+const [feedComments, setFeedComments] = useState({}); // feedId -> comments[]
+const [newComment, setNewComment] = useState({});
+const [feedReactions, setFeedReactions] = useState({}); // feedId -> { reactionType: count }
+const IMGBB_API_KEY = '6edb57ee29f6319f97ebd2fef40bb51b';
+
+// 공감 스티커 정의
+const reactionStickers = {
+  '😍': 'love',
+  '😂': 'funny',
+  '👏': 'awesome',
+  '🔥': 'fire',
+  '💯': 'perfect',
+  '😲': 'wow',
+  '😢': 'sad',
+  '🤔': 'thinking'
+};
 
 // 번역 캐시: messageId -> translatedText
 const [translatedMap, setTranslatedMap] = useState({});
@@ -323,6 +384,89 @@ useEffect(() => {
 
   return () => clearInterval(checkFirebase);
 }, []);
+
+// ✅ useEffect - Jitsi 초기화 (수정됨)
+useEffect(() => {
+  if (!showVideoCall || !jitsiRoomName) return;
+
+  const timer = setTimeout(() => {
+    const container = document.getElementById('jitsi-container');
+    
+    if (!container) {
+      console.error('❌ Jitsi container not found');
+      return;
+    }
+
+    if (typeof window.JitsiMeetExternalAPI === 'undefined') {
+      console.error('❌ Jitsi API not loaded');
+      return;
+    }
+
+    try {
+      if (window.jitsiAPI) {
+        window.jitsiAPI.dispose();
+      }
+
+      const options = {
+        roomName: jitsiRoomName,
+        width: '100%',
+        height: '100%',
+        parentNode: container,
+        userInfo: {
+          displayName: user.name,
+          email: user.email
+        },
+        configOverwrite: {
+          startWithVideoMuted: false,
+          startWithAudioMuted: false,
+          disableSimulcast: false,
+          enableLayerSuspension: true,
+          defaultLanguage: 'ko'
+        },
+        interfaceConfigOverwrite: {
+          TOOLBAR_BUTTONS: [
+            'microphone',
+            'camera',
+            'closedcaptions',
+            'desktop',
+            'fullscreen',
+            'hangup',
+            'chat',
+            'settings',
+            'raisehand',
+            'videoquality',
+            'filmstrip',
+            'invite',
+            'stats',
+            'shortcuts',
+            'tileview'
+          ],
+          SHOW_JITSI_WATERMARK: false,
+          SHOW_WATERMARK_FOR_GUESTS: false
+        }
+      };
+
+      window.jitsiAPI = new window.JitsiMeetExternalAPI('meet.jit.si', options);
+
+      window.jitsiAPI.addEventListeners({
+        onReadyToClose: () => {
+          endVideoCall();
+        }
+      });
+
+      console.log('✅ Jitsi Meet initialized');
+    } catch (error) {
+      console.error('❌ Jitsi 초기화 오류:', error);
+      showToast('❌ 화상 통화 시작 실패', 'error');
+      setShowVideoCall(false);
+    }
+  }, 200);
+
+  return () => clearTimeout(timer);
+}, [showVideoCall, jitsiRoomName, user]);
+
+
+
 
 useEffect(() => {
   if ((selectedRoom || selectedDM) && user) {
@@ -587,19 +731,51 @@ useEffect(() => {
   }
 }, [selectedRoom, user]);
 
-  const loadFeedPosts = () => {
-    const postsRef = window.firebase.database().ref('feed');
-    postsRef.limitToLast(20).on('value', (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const postsList = Object.keys(data).map(key => ({
-          id: key,
-          ...data[key]
-        }));
-        setFeedPosts(postsList.reverse());
+
+const uploadImageToImgbb = async (file) => {
+  try {
+    const formData = new FormData();
+    formData.append('image', file);
+    
+    const response = await fetch(
+      `https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`,
+      {
+        method: 'POST',
+        body: formData
       }
-    });
-  };
+    );
+    
+    if (!response.ok) throw new Error('Upload failed');
+    const data = await response.json();
+    return data.data.url;
+  } catch (error) {
+    console.error('❌ Image upload error:', error);
+    showToast('❌ Image upload failed', 'error');
+    return null;
+  }
+};
+
+// 파일 선택 핸들러
+const handleFeedImageSelect = async (e) => {
+  const files = Array.from(e.target.files || []);
+  if (files.length + feedImages.length > 5) {
+    showToast('⚠️ Maximum 5 images per post', 'error');
+    return;
+  }
+  
+  for (const file of files) {
+    showToast('⏳ Uploading image...', 'info');
+    const url = await uploadImageToImgbb(file);
+    if (url) {
+      setFeedImages(prev => [...prev, url]);
+    }
+  }
+};
+
+
+
+
+  
 
   const loadCommunityPosts = () => {
     const postsRef = window.firebase.database().ref('community');
@@ -1570,6 +1746,103 @@ const removeBannedWord = (roomId, word) => {
   });
 };
 
+
+// ✅ startVideoCall 함수 - 외부 링크로 변경
+const startVideoCall = () => {
+  if (!selectedRoom) {
+    alert('방을 선택해주세요');
+    return;
+  }
+
+  const roomName = `unvul-${selectedRoom.id}-${Date.now()}`;
+  
+  // Firebase에 통화 기록
+  const callRef = window.firebase.database()
+    .ref(`rooms/${selectedRoom.id}/activeCalls`)
+    .push();
+  
+  callRef.set({
+    startedAt: Date.now(),
+    initiator: user.uid,
+    initiatorName: user.name,
+    initiatorPhoto: user.photo,
+    roomName: roomName,
+    participants: [user.uid],
+    jitsiUrl: `https://meet.jit.si/${roomName}` // ✅ 추가
+  });
+
+  // 통화 메시지 전송
+  const messagesRef = window.firebase.database()
+    .ref(`rooms/${selectedRoom.id}/messages`);
+  messagesRef.push({
+    type: 'video-call-started',
+    userId: user.uid,
+    userName: user.name,
+    userPhoto: user.photo,
+    timestamp: Date.now(),
+    roomName: selectedRoom.name,
+    jitsiRoomName: roomName, // ✅ 추가
+    jitsiUrl: `https://meet.jit.si/${roomName}` // ✅ 추가
+  });
+
+  // ✅ 외부 링크로 열기 (시간 제한 없음)
+  window.open(`https://meet.jit.si/${roomName}`, 'jitsi', 'width=1000,height=700');
+  
+  showToast('📹 화상 통화를 시작합니다!', 'success');
+};
+
+// ✅ joinVideoCall 함수 - 외부 링크로 변경
+const joinVideoCall = () => {
+  if (!activeVideoCall) {
+    alert('진행 중인 통화가 없습니다');
+    return;
+  }
+
+  // 외부 링크로 열기
+  window.open(activeVideoCall.jitsiUrl, 'jitsi', 'width=1000,height=700');
+  
+  showToast('📹 통화에 참가합니다!', 'success');
+};
+
+// ✅ endVideoCall 함수 - 수정 (외부 링크이므로 간소화)
+const endVideoCall = () => {
+  // Firebase에서 통화 종료
+  if (selectedRoom && activeVideoCall) {
+    const callRef = window.firebase.database()
+      .ref(`rooms/${selectedRoom.id}/activeCalls`);
+    
+    callRef.once('value', (snapshot) => {
+      const calls = snapshot.val();
+      if (calls) {
+        Object.keys(calls).forEach(key => {
+          if (calls[key].startedAt === activeVideoCall.startedAt) {
+            callRef.child(key).remove();
+          }
+        });
+      }
+    });
+  }
+
+  setShowVideoCall(false);
+  setActiveVideoCall(null);
+  setJitsiRoomName(null);
+  
+  // 통화 종료 메시지
+  if (selectedRoom) {
+    const messagesRef = window.firebase.database()
+      .ref(`rooms/${selectedRoom.id}/messages`);
+    messagesRef.push({
+      type: 'video-call-ended',
+      userId: user.uid,
+      userName: user.name,
+      userPhoto: user.photo,
+      timestamp: Date.now()
+    });
+  }
+
+  showToast('📵 화상 통화가 종료되었습니다', 'info');
+};
+
 const sendRandomPicker = (data) => {
   if (!selectedRoom) return;
   if (!checkToolCooldown('random')) return;
@@ -1786,21 +2059,166 @@ const getFilteredMessages = () => {
   return filtered;
 };
 
-  const createFeedPost = () => {
-    const content = prompt('Share something with the world:');
-    if (!content) return;
+const createFeedPost = async () => {
+  if (!feedContent.trim() && feedImages.length === 0) {
+    showToast('⚠️ Please add content or images', 'error');
+    return;
+  }
+  
+  // 텍스트 파싱 (bold, italic, 해시태그)
+  const parsedContent = feedContent
+    .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')  // **bold**
+    .replace(/\*(.*?)\*/g, '<i>$1</i>')      // *italic*
+    .replace(/#(\w+)/g, '<span class="hashtag">#$1</span>'); // #hashtag
+  
+  const hashtags = [...feedContent.matchAll(/#(\w+)/g)].map(m => m[1]);
+  
+  const postRef = window.firebase.database().ref('feed').push();
+  const postId = postRef.key;
+  
+  await postRef.set({
+    id: postId,
+    userId: user.uid,
+    userName: user.name,
+    userPhoto: user.photo,
+    userEmail: user.email,
+    content: parsedContent,
+    originalContent: feedContent, // 원본 텍스트 (수정용)
+    images: feedImages,
+    design: feedDesign,
+    hashtags: hashtags,
+    timestamp: Date.now(),
+    likes: 0,
+    reactions: {}, // reactionType -> count
+    comments: {},
+    tailComments: {},
+    invitedFriends: [],
+    editedAt: null
+  });
+  
+  setFeedContent('');
+  setFeedImages([]);
+  setFeedDesign('default');
+  setFeedTags('');
+  setShowFeedModal(false);
+  showToast('✅ Post published!', 'success');
+  loadFeedPosts();
+};
 
-    const feedRef = window.firebase.database().ref('feed');
-    feedRef.push({
-      content,
-      userId: user.uid,
-      userName: user.name,
-      userPhoto: user.photo,
-      timestamp: Date.now(),
-      likes: 0,
-      comments: 0
+// 피드 게시물 로드
+const loadFeedPosts = () => {
+  const postsRef = window.firebase.database().ref('feed');
+  postsRef.orderByChild('timestamp').limitToLast(50).on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (data) {
+      const postsList = Object.keys(data).map(key => ({
+        id: key,
+        ...data[key]
+      }));
+      setFeedPosts(postsList.reverse());
+    }
+  });
+};
+
+const addComment = async (feedId, commentText) => {
+  if (!commentText.trim()) return;
+  
+  const parsedComment = commentText
+    .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+    .replace(/\*(.*?)\*/g, '<i>$1</i>');
+  
+  const commentRef = window.firebase.database()
+    .ref(`feed/${feedId}/comments`)
+    .push();
+  
+  await commentRef.set({
+    id: commentRef.key,
+    userId: user.uid,
+    userName: user.name,
+    userPhoto: user.photo,
+    content: parsedComment,
+    timestamp: Date.now(),
+    replies: {}
+  });
+  
+  setNewComment(prev => ({ ...prev, [feedId]: '' }));
+  showToast('✅ Comment added!', 'success');
+};
+
+// 댓글 로드
+const loadFeedComments = (feedId) => {
+  const commentsRef = window.firebase.database().ref(`feed/${feedId}/comments`);
+  commentsRef.on('value', (snapshot) => {
+    const data = snapshot.val() || {};
+    setFeedComments(prev => ({
+      ...prev,
+      [feedId]: Object.values(data)
+    }));
+  });
+};
+
+const addTailComment = async (feedId) => {
+  if (!newTailComment.trim() && !tailCommentImage) return;
+  
+  let imageUrl = null;
+  if (tailCommentImage) {
+    imageUrl = await uploadImageToImgbb(tailCommentImage);
+  }
+  
+  const tailRef = window.firebase.database()
+    .ref(`feed/${feedId}/tailComments`)
+    .push();
+  
+  await tailRef.set({
+    id: tailRef.key,
+    userId: user.uid,
+    userName: user.name,
+    userPhoto: user.photo,
+    content: newTailComment,
+    image: imageUrl,
+    links: extractLinks(newTailComment),
+    timestamp: Date.now()
+  });
+  
+  setNewTailComment('');
+  setTailCommentImage(null);
+  showToast('✅ Tail comment added!', 'success');
+};
+
+// 링크 추출
+const extractLinks = (text) => {
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  return text.match(urlRegex) || [];
+};
+
+const addReaction = async (feedId, reactionEmoji) => {
+  const reactionType = reactionStickers[reactionEmoji];
+  const postRef = window.firebase.database().ref(`feed/${feedId}`);
+  
+  await postRef.once('value', (snapshot) => {
+    const post = snapshot.val();
+    const reactions = post.reactions || {};
+    const currentCount = reactions[reactionType] || 0;
+    
+    postRef.update({
+      [`reactions/${reactionType}`]: currentCount + 1
     });
-  };
+  });
+  
+  showToast(`${reactionEmoji} Added!`, 'success');
+};
+
+// 사용자 반응 조회
+const getUserReaction = (feedId) => {
+  const post = feedPosts.find(p => p.id === feedId);
+  if (!post || !post.reactions) return null;
+  
+  // reactions 객체에서 최대값을 가진 반응 반환
+  const maxReaction = Object.entries(post.reactions)
+    .sort((a, b) => b[1] - a[1])[0];
+  
+  return maxReaction ? maxReaction[0] : null;
+};
 
   const createCommunityPost = () => {
     const title = prompt('Post title:');
@@ -2627,6 +3045,37 @@ const getFilteredMessages = () => {
     )}
     
 
+
+</div>
+) : msg.type === 'video-call-started' ? (
+  <div className="p-4 rounded-2xl bg-gradient-to-br from-red-900/50 to-rose-900/50 border-2 border-red-500 backdrop-blur-xl text-center">
+    <div className="text-2xl mb-2">📹</div>
+    <div className="text-red-300 font-bold text-lg flex items-center justify-center gap-2">
+      <Rocket className="w-5 h-5" />
+      {msg.userName} started a video call!
+    </div>
+    
+    {/* ✅ 참여 버튼 추가 */}
+    {msg.jitsiUrl && (
+      <button
+        onClick={() => {
+          window.open(msg.jitsiUrl, 'jitsi', 'width=1000,height=700');
+          showToast('📹 화상 통화에 참가합니다!', 'success');
+        }}
+        className="mt-3 w-full bg-gradient-to-r from-red-500 to-rose-600 text-white px-4 py-2 rounded-lg font-bold hover:shadow-lg transition-all flex items-center justify-center gap-2"
+      >
+        <Rocket className="w-4 h-4" />
+        Join Now
+      </button>
+    )}
+  </div>
+) : msg.type === 'video-call-ended' ? (
+  <div className="p-4 rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/50 border-2 border-gray-500 backdrop-blur-xl text-center">
+    <div className="text-2xl mb-2">📵</div>
+    <div className="text-gray-300 font-bold text-lg flex items-center justify-center gap-2">
+      <X className="w-5 h-5" />
+      {msg.userName} ended the video call
+    </div>
   </div>
 ) : msg.type === 'random-result' ? (
   <div className="p-4 rounded-2xl bg-gradient-to-br from-green-900/50 to-emerald-900/50 border-2 border-green-500 backdrop-blur-xl text-center">
@@ -3004,6 +3453,41 @@ onClick={() => {
   </div>
 )}
 
+{/* ✅ 통화 진행 중 알림 - 메시지 영역 위에 추가*/}
+{activeVideoCall && !showVideoCall && selectedRoom?.id === activeVideoCall.roomName?.split('-')[1] && (
+  <div className="fixed bottom-8 right-8 z-40 animate-bounce">
+    <div className="bg-gradient-to-r from-red-500 via-rose-500 to-pink-500 rounded-2xl p-6 shadow-2xl shadow-red-500/50 border-2 border-red-300 backdrop-blur-xl max-w-sm">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="animate-pulse">
+            <Rocket className="w-8 h-8 text-white" />
+          </div>
+          <div>
+            <div className="font-black text-white text-lg flex items-center gap-2">
+              {activeVideoCall.initiatorName}
+              <span className="text-xs bg-white text-red-500 px-2 py-1 rounded-full font-black">LIVE</span>
+            </div>
+            <div className="text-sm text-red-100">Starting a call...</div>
+          </div>
+        </div>
+      </div>
+      
+      <button
+        onClick={() => joinVideoCall()}
+        className="w-full bg-white text-red-600 px-6 py-3 rounded-xl font-black text-lg hover:bg-gray-100 transition-all flex items-center justify-center gap-2 shadow-lg"
+      >
+        <Rocket className="w-6 h-6" />
+        Join Call
+      </button>
+      
+      <p className="text-xs text-red-100 text-center mt-3">
+        Clicking this may sent you to another page...
+      </p>
+    </div>
+  </div>
+)}
+
+
 {/* 도구 바 */}
 <div className="flex gap-2 mb-3">
                       <button
@@ -3033,7 +3517,18 @@ onClick={() => {
                         <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-pink-600 transition-all">
                           <HelpCircle className="w-5 h-5 text-white" />
                         </div>
-                      </button>
+                        </button>
+{/* ✅ 화상 통화 버튼 - 완전 수정 */}
+<button
+  onClick={() => startVideoCall()}
+  className="relative group"
+>
+  <div className="absolute inset-0 bg-gradient-to-r from-red-500 to-rose-600 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
+  <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-red-600 transition-all">
+    <Rocket className="w-5 h-5 text-white" />
+  </div>
+</button>
+
 <button
   onClick={() => setShowRandomPicker(true)}
   className="relative group"
@@ -3130,7 +3625,7 @@ onClick={() => {
       )}
 
       {/* Feed View */}
-      {currentView === 'feed' && (
+     {/* {currentView === 'feed' && (
         <div className="max-w-2xl mx-auto p-4 relative z-10">
           <div className="mb-5">
             <button
@@ -3348,117 +3843,65 @@ onClick={() => {
         </div>
       )}
 
-      {/* Quiz Modal */}
-{showQuizModal && (
-  <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-    <div className="bg-gray-800/95 backdrop-blur-xl rounded-2xl p-6 max-w-md w-full border-2 border-pink-500/50 shadow-2xl relative max-h-[90vh] overflow-y-auto">
-      <div className="absolute -inset-0.5 bg-gradient-to-r from-pink-500 to-red-600 rounded-2xl opacity-20 blur"></div>
-      <div className="relative">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xl font-black text-pink-400 flex items-center gap-2">
-            <HelpCircle className="w-6 h-6" />
-            Create Quiz
-            <Award className="w-5 h-5 text-yellow-400" />
+{showVideoCall && jitsiRoomName && (
+  <div className="fixed inset-0 bg-black/98 backdrop-blur-lg flex flex-col z-[100]">
+    
+    {/* 헤더 */}
+    <div className="bg-gradient-to-r from-gray-900 to-gray-800 border-b-2 border-red-500/50 px-6 py-4 flex items-center justify-between flex-shrink-0 shadow-2xl">
+      <div className="flex items-center gap-4">
+        <div className="relative">
+          <div className="absolute inset-0 bg-red-500 rounded-full blur animate-pulse"></div>
+          <div className="relative bg-red-500 p-2.5 rounded-full">
+            <Rocket className="w-6 h-6 text-white" />
+          </div>
+        </div>
+        <div>
+          <h3 className="text-2xl font-black text-red-400">
+            Video Call
           </h3>
-          <button
-            onClick={() => {
-              setShowQuizModal(false);
-              setQuizOptions(['', '', '', '']);
-            }}
-            className="text-gray-400 hover:text-red-400 transition-all"
-          >
-            <X className="w-6 h-6" />
-          </button>
+          <p className="text-sm text-gray-400">
+            {selectedRoom?.name}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <div className="bg-gray-800/50 px-4 py-2 rounded-xl border border-gray-700">
+          <Clock className="inline w-4 h-4 mr-2 text-cyan-400 animate-spin" />
+          <span className="text-sm font-bold text-gray-300">Connected</span>
         </div>
         
-        <div className="space-y-3">
-          <div className="relative">
-            <HelpCircle className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              id="quizQuestion"
-              placeholder="Quiz question"
-              className="w-full pl-10 pr-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl focus:border-pink-500 focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all"
-            />
-          </div>
-          
-          {quizOptions.map((opt, idx) => (
-            <div key={idx} className="relative">
-              <span className="absolute left-3 top-1/2 transform -translate-y-1/2 w-6 h-6 bg-pink-500 rounded-full flex items-center justify-center text-white text-xs font-bold">
-                {String.fromCharCode(65 + idx)}
-              </span>
-              <input
-                type="text"
-                value={opt}
-                onChange={(e) => {
-                  const newOptions = [...quizOptions];
-                  newOptions[idx] = e.target.value;
-                  setQuizOptions(newOptions);
-                }}
-                placeholder={`Option ${String.fromCharCode(65 + idx)}`}
-                className="w-full pl-11 pr-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl focus:border-pink-500 focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all"
-              />
-            </div>
-          ))}
-          
-          {quizOptions.length < 26 && (
-            <button
-              onClick={() => setQuizOptions([...quizOptions, ''])}
-              className="w-full py-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 rounded-xl transition-all flex items-center justify-center gap-2 border border-gray-600"
-            >
-              <Plus className="w-4 h-4" />
-              Add Option (Max: Z)
-            </button>
-          )}
-          
-          <div className="relative">
-            <Star className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-yellow-400" />
-            <input
-              type="text"
-              id="correctAnswer"
-              placeholder="Correct answer (A, B, C...)"
-              maxLength="1"
-              className="w-full pl-10 pr-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl focus:border-pink-500 focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all uppercase"
-              onInput={(e) => e.target.value = e.target.value.toUpperCase()}
-            />
-          </div>
+        <button
+          onClick={() => endVideoCall()}
+          className="bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white px-6 py-3 rounded-xl font-bold transition-all hover:shadow-lg hover:shadow-red-500/50 flex items-center gap-2 group"
+        >
+          <X className="w-5 h-5 group-hover:rotate-90 transition-transform" />
+          End Call
+        </button>
+      </div>
+    </div>
+
+    {/* Jitsi 컨테이너 - 전체 화면 */}
+    <div className="flex-1 overflow-hidden bg-black">
+      <div 
+        id="jitsi-container"
+        className="w-full h-full"
+      />
+    </div>
+
+    {/* 하단 정보 */}
+    <div className="bg-gray-900/80 border-t border-gray-700 px-6 py-3 flex items-center justify-between flex-shrink-0 backdrop-blur-xl">
+      <div className="flex items-center gap-4">
+        <img src={user.photo} alt={user.name} className="w-10 h-10 rounded-full border-2 border-cyan-400" />
+        <div>
+          <div className="font-bold text-white">{user.name}</div>
+          <div className="text-xs text-gray-400">You</div>
         </div>
-        
-        <div className="flex gap-3 mt-4">
-          <button
-            onClick={() => {
-              const question = document.getElementById('quizQuestion').value;
-              const correct = document.getElementById('correctAnswer').value;
-              const validOptions = quizOptions.filter(o => o.trim());
-              
-              if (!question || validOptions.length < 2 || !correct) {
-                alert('❌ Please fill in the question, at least 2 options, and the correct answer!');
-                return;
-              }
-              
-              const answerIndex = correct.charCodeAt(0) - 65;
-              if (answerIndex < 0 || answerIndex >= validOptions.length) {
-                alert('❌ Correct answer must be a valid option letter!');
-                return;
-              }
-              
-              sendQuiz({ question, options: validOptions, correctAnswer: correct });
-            }}
-            className="flex-1 bg-gradient-to-r from-pink-500 to-red-600 text-white py-3 rounded-xl font-bold hover:shadow-xl hover:shadow-pink-500/50 transition-all flex items-center justify-center gap-2"
-          >
-            <Rocket className="w-5 h-5" />
-            Create Quiz
-          </button>
-          <button
-            onClick={() => {
-              setShowQuizModal(false);
-              setQuizOptions(['', '', '', '']);
-            }}
-            className="px-6 bg-gray-700 text-gray-300 rounded-xl hover:bg-gray-600 font-bold transition-all"
-          >
-            Cancel
-          </button>
-        </div>
+      </div>
+      
+      <div className="flex items-center gap-2 text-xs">
+        <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+        <span className="text-gray-300">Camera & Microphone Active</span>
       </div>
     </div>
   </div>
@@ -4595,6 +5038,8 @@ return (
             </div>
           </div>
 
+
+
           {/* 방문 유저 목록 */}
           <div className="bg-gray-700/50 p-4 rounded-xl border border-blue-500/30">
             <h4 className="font-bold text-blue-300 mb-3 flex items-center gap-2">
@@ -4742,6 +5187,349 @@ return (
           Done
         </button>
       </div>
+    </div>
+  </div>
+)}
+
+{showFeedModal && (
+  <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="bg-gray-800/95 backdrop-blur-xl rounded-2xl p-6 max-w-2xl w-full border-2 border-purple-500/50 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+      <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-500 to-pink-600 rounded-2xl opacity-20 blur"></div>
+      
+      <div className="relative">
+        <h3 className="text-xl font-black text-purple-400 mb-4 flex items-center gap-2">
+          <Globe className="w-6 h-6" />
+          Create Feed Post
+          <Sparkles className="w-5 h-5 text-yellow-400 animate-pulse" />
+        </h3>
+
+        {/* 디자인 선택 */}
+        <div className="mb-4">
+          <label className="text-sm font-bold text-gray-300 mb-2 block">Post Design</label>
+          <div className="grid grid-cols-4 gap-2">
+            {['default', 'dark', 'gradient', 'minimal'].map(design => (
+              <button
+                key={design}
+                onClick={() => setFeedDesign(design)}
+                className={`p-3 rounded-lg font-bold transition-all capitalize text-sm ${
+                  feedDesign === design
+                    ? 'bg-purple-500 text-white ring-2 ring-purple-300'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                }`}
+              >
+                {design}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 텍스트 에디터 */}
+        <div className="mb-4">
+          <label className="text-sm font-bold text-gray-300 mb-2 block">Content (Shift+Enter for line break)</label>
+          <textarea
+            value={feedContent}
+            onChange={(e) => setFeedContent(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && e.shiftKey) {
+                e.preventDefault();
+                setFeedContent(prev => prev + '\n');
+              }
+            }}
+            placeholder="Write your post... Use **bold** and *italic* and #hashtags"
+            className="w-full p-4 bg-gray-700 border border-gray-600 text-white rounded-xl focus:border-purple-500 focus:outline-none transition-all h-32 resize-none"
+          />
+          <div className="text-xs text-gray-400 mt-1">
+            💡 **text** = bold | *text* = italic | #tag = hashtag
+          </div>
+        </div>
+
+        {/* 이미지 업로드 */}
+        <div className="mb-4">
+          <label className="text-sm font-bold text-gray-300 mb-2 block">Images (Max 5)</label>
+          <label className="block border-2 border-dashed border-purple-500/50 rounded-xl p-4 text-center cursor-pointer hover:bg-purple-500/10 transition-all">
+            <input
+              type="file"
+              multiple
+              accept="image/*"
+              onChange={handleFeedImageSelect}
+              className="hidden"
+            />
+            <ImageIcon className="w-6 h-6 text-purple-400 mx-auto mb-2" />
+            <span className="text-sm text-gray-300">Click to upload images</span>
+          </label>
+          
+          {feedImages.length > 0 && (
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              {feedImages.map((img, idx) => (
+                <div key={idx} className="relative group">
+                  <img src={img} alt={`Preview ${idx}`} className="w-full h-24 object-cover rounded-lg" />
+                  <button
+                    onClick={() => setFeedImages(prev => prev.filter((_, i) => i !== idx))}
+                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-all"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 친구 초대 */}
+        <div className="mb-4">
+          <label className="text-sm font-bold text-gray-300 mb-2 block">Invite Friends (Optional)</label>
+          <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
+            {friends.map(friend => (
+              <label key={friend.uid} className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" className="w-4 h-4" />
+                <span className="text-sm text-gray-300">{friend.name}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={createFeedPost}
+            className="flex-1 bg-gradient-to-r from-purple-500 to-pink-600 text-white py-3 rounded-xl font-bold hover:shadow-xl transition-all flex items-center justify-center gap-2"
+          >
+            <Rocket className="w-5 h-5" />
+            Publish Post
+          </button>
+          <button
+            onClick={() => {
+              setShowFeedModal(false);
+              setFeedContent('');
+              setFeedImages([]);
+              setFeedDesign('default');
+            }}
+            className="px-6 bg-gray-700 text-gray-300 rounded-xl hover:bg-gray-600 font-bold transition-all"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{currentView === 'feed' && (
+  <div className="max-w-3xl mx-auto p-4 relative z-10">
+    <button
+      onClick={() => setShowFeedModal(true)}
+      className="w-full bg-gradient-to-r from-purple-500 to-pink-600 text-white py-4 rounded-2xl font-black text-lg hover:shadow-2xl hover:shadow-purple-500/50 hover:scale-105 transition-all flex items-center justify-center gap-3 border border-pink-500/30 mb-5"
+    >
+      <Plus className="w-6 h-6" />
+      Create New Post
+      <Sparkles className="w-5 h-5 animate-pulse" />
+    </button>
+
+    <div className="space-y-6">
+      {feedPosts.map(post => (
+        <div
+          key={post.id}
+          className={`bg-gray-800/90 backdrop-blur-2xl rounded-2xl shadow-2xl overflow-hidden border transition-all ${
+            post.design === 'dark'
+              ? 'border-gray-600 bg-gray-900'
+              : post.design === 'gradient'
+              ? 'border-purple-500/30 bg-gradient-to-br from-purple-900/30 to-pink-900/30'
+              : post.design === 'minimal'
+              ? 'border-gray-500/20 bg-gray-800/50'
+              : 'border-purple-500/30'
+          }`}
+        >
+          {/* 이미지 갤러리 (최상단) */}
+          {post.images && post.images.length > 0 && (
+            <div className="relative">
+              <div
+                className="relative bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center overflow-hidden"
+                style={{ aspectRatio: post.images.length === 1 ? '16/9' : '1/1' }}
+              >
+                {post.images.length === 1 ? (
+                  <img src={post.images[0]} alt="Post" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="grid grid-cols-2 gap-1 w-full h-full">
+                    {post.images.map((img, idx) => (
+                      <img
+                        key={idx}
+                        src={img}
+                        alt={`Post ${idx}`}
+                        className="w-full h-full object-cover"
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 헤더 (프로필) */}
+          <div className="p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <img
+                  src={post.userPhoto}
+                  alt={post.userName}
+                  className="w-12 h-12 rounded-full border-2 border-purple-400"
+                />
+                <div>
+                  <div className="font-black text-gray-100 flex items-center gap-2">
+                    {post.userName}
+                    <Award className="w-4 h-4 text-yellow-400" />
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    {new Date(post.timestamp).toLocaleDateString()}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 본문 */}
+            <div
+              className="text-gray-200 mb-4 leading-relaxed whitespace-pre-wrap break-words"
+              dangerouslySetInnerHTML={{ __html: post.content }}
+            />
+
+            {/* 해시태그 */}
+            {post.hashtags && post.hashtags.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-4">
+                {post.hashtags.map((tag, idx) => (
+                  <span
+                    key={idx}
+                    className="text-purple-400 text-sm font-bold hover:text-purple-300 cursor-pointer"
+                  >
+                    #{tag}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* 공감 스티커 */}
+            <div className="flex gap-2 mb-4 flex-wrap">
+              {Object.entries(reactionStickers).map(([emoji, type]) => (
+                <button
+                  key={emoji}
+                  onClick={() => addReaction(post.id, emoji)}
+                  className="relative group px-3 py-2 rounded-lg bg-gray-700/50 hover:bg-gray-700 transition-all"
+                >
+                  <span className="text-xl">{emoji}</span>
+                  {post.reactions?.[type] && (
+                    <span className="absolute -top-2 -right-2 bg-purple-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                      {post.reactions[type]}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* 댓글 섹션 */}
+            <div className="bg-gray-700/30 p-4 rounded-xl">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-bold text-gray-300 flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4" />
+                  Comments ({feedComments[post.id]?.length || 0})
+                </h4>
+                <button
+                  onClick={() => setExpandedFeedId(expandedFeedId === post.id ? null : post.id)}
+                  className="text-xs text-purple-400 hover:text-purple-300"
+                >
+                  {expandedFeedId === post.id ? 'Hide' : 'Show All'}
+                </button>
+              </div>
+
+              {expandedFeedId === post.id && feedComments[post.id] && (
+                <div className="space-y-3 mb-3 max-h-48 overflow-y-auto">
+                  {feedComments[post.id].map(comment => (
+                    <div key={comment.id} className="bg-gray-800/50 p-2 rounded-lg text-sm">
+                      <div className="font-bold text-gray-200">{comment.userName}</div>
+                      <div
+                        className="text-gray-300"
+                        dangerouslySetInnerHTML={{ __html: comment.content }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 댓글 입력 */}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newComment[post.id] || ''}
+                  onChange={(e) => setNewComment(prev => ({ ...prev, [post.id]: e.target.value }))}
+                  placeholder="Add a comment..."
+                  className="flex-1 px-3 py-2 bg-gray-600 border border-gray-500 text-white rounded-lg text-sm focus:border-purple-500 focus:outline-none"
+                />
+                <button
+                  onClick={() => addComment(post.id, newComment[post.id])}
+                  className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-2 rounded-lg transition-all"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* 말꼬리 섹션 */}
+            <div className="mt-4 border-t border-gray-600 pt-4">
+              <h4 className="font-bold text-gray-300 mb-3 flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />
+                Tail Comments
+              </h4>
+
+              {post.tailComments && Object.values(post.tailComments).map((tail, idx) => (
+                <div key={idx} className="bg-gray-700/30 p-3 rounded-lg mb-2 text-sm">
+                  <div className="font-bold text-gray-200">{tail.userName}</div>
+                  <p className="text-gray-300 my-1">{tail.content}</p>
+                  {tail.image && (
+                    <img src={tail.image} alt="Tail" className="w-full max-w-xs rounded-lg my-1" />
+                  )}
+                  {tail.links && tail.links.map((link, lidx) => (
+                    <a
+                      key={lidx}
+                      href={link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-400 hover:text-blue-300 text-xs break-all"
+                    >
+                      {link}
+                    </a>
+                  ))}
+                </div>
+              ))}
+
+              {/* 말꼬리 추가 */}
+              <div className="bg-gray-700/50 p-3 rounded-lg">
+                <textarea
+                  value={newTailComment}
+                  onChange={(e) => setNewTailComment(e.target.value)}
+                  placeholder="Add a tail comment..."
+                  className="w-full p-2 bg-gray-600 border border-gray-500 text-white rounded-lg text-sm focus:border-purple-500 focus:outline-none resize-none"
+                  rows="2"
+                />
+                
+                <div className="flex gap-2 mt-2">
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setTailCommentImage(e.target.files?.[0] || null)}
+                      className="hidden"
+                    />
+                    <ImageIcon className="w-5 h-5 text-gray-400 hover:text-purple-400" />
+                  </label>
+                  
+                  <button
+                    onClick={() => addTailComment(post.id)}
+                    className="ml-auto bg-purple-500 hover:bg-purple-600 text-white px-3 py-1 rounded-lg text-sm transition-all"
+                  >
+                    Add Tail Comment
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   </div>
 )}
