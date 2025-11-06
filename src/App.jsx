@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { MessageCircle, Globe, Users, Plus, Lock, Send, Heart, MessageSquare, LogOut, Sparkles, Zap, Smile, Palette, HelpCircle, X, Search, Bell, Settings, Menu, TrendingUp, Star, Award, Shield, Crown, Rocket, Image as ImageIcon, ChevronUp, ZoomIn, ChevronDown, Filter, Hash, AtSign, Clock, Trophy } from 'lucide-react';
 
 const App = () => {
@@ -28,6 +28,7 @@ const [newDisplayName, setNewDisplayName] = useState('');
   // ✅ Jitsi 화상 통화 관련 State 추가
 const [showVideoCall, setShowVideoCall] = useState(false);
 const [jitsiContainer, setJitsiContainerId] = useState(null);
+const [isDarkMode, setIsDarkMode] = useState(true); // 기본값: 다크 모드
 
 // ✅ State 추가 (상단 근처)
 const [activeVideoCall, setActiveVideoCall] = useState(null); // 진행 중인 통화 정보
@@ -45,45 +46,7 @@ const [jitsiRoomName, setJitsiRoomName] = useState(null);
 
 // ✅ openDirectMessage 함수 - 중복 코드 제거
 
-const openDirectMessage = async (friend) => {
-  if (!user || !friend?.uid) return;
-  
-  const dmId = getDeterministicDmId(user.uid, friend.uid);
-  const dmRef = window.firebase.database().ref(`directMessages/${dmId}`);
-  const snapshot = await dmRef.once('value');
-  
-  // DM 채팅방이 없으면 생성
-  if (!snapshot.exists()) {
-    await dmRef.set({
-      name: friend.name,
-      createdBy: user.uid,
-      createdAt: Date.now(),
-      members: {
-        [user.uid]: {
-          name: user.name,
-          photo: user.photo,
-          joinedAt: Date.now(),
-          online: true,
-          lastSeen: Date.now()
-        },
-        [friend.uid]: {
-          name: friend.name,
-          photo: friend.photo,
-          joinedAt: Date.now(),
-          online: false,
-          lastSeen: 0
-        }
-      },
-      rules: {
-        chat: {},
-        drawing: {},
-        emoji: {},
-        quiz: {},
-        random: {}
-      },
-      bannedWords: []
-    });
-  }
+
 
   // ✅ 통화 감지 함수 추가
 useEffect(() => {
@@ -112,68 +75,7 @@ useEffect(() => {
 }, [selectedRoom?.id, user]);
 
   
-  // 메타데이터 저장
-  const now = Date.now();
-  await window.firebase.database().ref(`userProfiles/${user.uid}/dms/${dmId}`).set({
-    dmId,
-    peerUid: friend.uid,
-    peerName: friend.name,
-    peerPhoto: friend.photo,
-    createdAt: now,
-    lastMessageAt: now
-  });
-  
-  await window.firebase.database().ref(`userProfiles/${friend.uid}/dms/${dmId}`).set({
-    dmId,
-    peerUid: user.uid,
-    peerName: user.name,
-    peerPhoto: user.photo,
-    createdAt: now,
-    lastMessageAt: now
-  });
-  
-  // ✅ 최종 DM 데이터 로드 (한 번만!)
-  const dmData = (await dmRef.once('value')).val();
-  setSelectedRoom({
-    id: dmId,
-    isDM: true,
-    peerName: friend.name,
-    peerPhoto: friend.photo,
-    ...dmData,
-    participants: 0,
-    rules: dmData?.rules || {},
-    bannedWords: dmData?.bannedWords || []
-  });
-  
-  setCurrentChatType('room');
-  setCurrentView('chat');
-  setShowRoomList(false); // 모바일에서 목록 닫기
-  
-  registerMember(dmId, true);
 
-
-
-  
-
-
-
-  // 채팅방 데이터 로드
-
-const roomData = (await roomRef.once('value')).val();
-  setSelectedRoom({
-    id: dmId,
-    ...roomData,
-    participants: 0,
-    rules: roomData.rules || {},
-    bannedWords: roomData.bannedWords || []
-  });
-  
-  setCurrentChatType('room'); // DM도 room으로 처리
-  setCurrentView('chat');
-  
-  // 멤버 등록
-  registerMember(dmId);
-};
 
 // useEffect에 추가
 useEffect(() => {
@@ -272,6 +174,10 @@ const [feedComments, setFeedComments] = useState({}); // feedId -> comments[]
 const [newComment, setNewComment] = useState({});
 const [feedReactions, setFeedReactions] = useState({}); // feedId -> { reactionType: count }
 const IMGBB_API_KEY = '6edb57ee29f6319f97ebd2fef40bb51b';
+// ✅ Typing Indicator 기능 추가
+const [typingUsers, setTypingUsers] = useState({}); // {userId: {name, photo, timestamp}}
+const [showTypingIndicator, setShowTypingIndicator] = useState(true); // 기본값: ON
+const typingTimeoutRef = useRef(null);
 
 // 공감 스티커 정의
 const reactionStickers = {
@@ -526,6 +432,90 @@ useEffect(() => {
 }, [currentChatType, selectedRoom?.id, selectedDM?.id, user]);
 
 
+const openDirectMessage = async (friend) => {
+  if (!user || !friend?.uid) return;
+  
+  try {
+    const dmId = getDeterministicDmId(user.uid, friend.uid);
+    const dmRef = window.firebase.database().ref(`directMessages/${dmId}`);
+    const snapshot = await dmRef.once('value');
+    
+    if (!snapshot.exists()) {
+      await dmRef.set({
+        name: friend.name,
+        createdBy: user.uid,
+        createdAt: Date.now(),
+        isDM: true,
+        members: {
+          [user.uid]: {
+            name: user.name,
+            photo: user.photo,
+            joinedAt: Date.now(),
+            online: true,
+            lastSeen: Date.now()
+          },
+          [friend.uid]: {
+            name: friend.name,
+            photo: friend.photo,
+            joinedAt: Date.now(),
+            online: false,
+            lastSeen: 0
+          }
+        },
+        rules: {
+          chat: {},
+          drawing: {},
+          emoji: {},
+          quiz: {},
+          random: {}
+        },
+        bannedWords: []
+      });
+    }
+
+
+ const now = Date.now();
+    await Promise.all([
+      window.firebase.database().ref(`userProfiles/${user.uid}/dms/${dmId}`).set({
+        dmId,
+        peerUid: friend.uid,
+        peerName: friend.name,
+        peerPhoto: friend.photo,
+        createdAt: now,
+        lastMessageAt: now
+      }),
+      window.firebase.database().ref(`userProfiles/${friend.uid}/dms/${dmId}`).set({
+        dmId,
+        peerUid: user.uid,
+        peerName: user.name,
+        peerPhoto: user.photo,
+        createdAt: now,
+        lastMessageAt: now
+      })
+    ]);
+    
+    const dmData = (await dmRef.once('value')).val();
+    setSelectedRoom({
+      id: dmId,
+      isDM: true,
+      peerName: friend.name,
+      peerPhoto: friend.photo,
+      ...dmData,
+      participants: 0,
+      rules: dmData?.rules || {},
+      bannedWords: dmData?.bannedWords || []
+    });
+    
+    setCurrentChatType('room');
+    setCurrentView('chat');
+    setShowRoomList(false);
+    
+  } catch (error) {
+    console.error('❌ openDirectMessage error:', error);
+  }
+};
+
+
 // 번역: 메시지 목록 변경 또는 설정 변경 시 비동기 번역 수행
 useEffect(() => {
   if (!translateEnabled || !targetLanguage) return;
@@ -588,11 +578,14 @@ const loadRooms = () => {
   roomsRef.on('value', (snapshot) => {
     const data = snapshot.val();
     if (data) {
-      // ⭐ isDM이 true인 것 제외 (DM은 따로 저장됨)
       const roomsList = Object.keys(data)
-        .filter(key => !data[key].isDM) // isDM 필터링
+        // ✅ isDM이 명시적으로 false인 경우만 표시
+        .filter(key => data[key].isDM !== true)  // 수정: === false 대신 !== true
         .map(key => {
           const room = data[key];
+          // ✅ isDM 속성 검증
+          if (room.isDM === true) return null;  // 이중 확인
+          
           return {
             id: key,
             name: room.name,
@@ -602,7 +595,8 @@ const loadRooms = () => {
             createdAt: room.createdAt,
             participants: room.participants
           };
-        });
+        })
+        .filter(Boolean); // null 값 제거
       setRooms(roomsList);
     }
   });
@@ -809,27 +803,57 @@ const loadFriends = () => {
   const requestsRef = window.firebase.database().ref(`userProfiles/${user.uid}/friendRequests`);
   const sentRef = window.firebase.database().ref(`userProfiles/${user.uid}/sentRequests`);
   
-  // ✅ 기존 리스너 완전히 제거
+  // ✅ 기존 리스너 제거
   friendsRef.off();
   requestsRef.off();
   sentRef.off();
   
-  // ✅ 친구 목록
+  // ✅ 친구 목록 - uid 필드 확인
   friendsRef.on('value', (snapshot) => {
     const data = snapshot.val();
-    setFriends(data ? Object.keys(data).map(key => ({ uid: key, ...data[key] })) : []);
+    if (data) {
+      const friendsList = Object.keys(data)
+        .map(key => ({
+          uid: key,  // ✅ 명시적으로 uid 저장
+          ...data[key]
+        }))
+        .filter(f => f.uid);  // uid 없는 항목 제거
+      setFriends(friendsList);
+    } else {
+      setFriends([]);
+    }
   });
   
   // ✅ 받은 요청
   requestsRef.on('value', (snapshot) => {
     const data = snapshot.val();
-    setFriendRequests(data ? Object.keys(data).map(key => ({ uid: key, ...data[key] })) : []);
+    if (data) {
+      const requestsList = Object.keys(data)
+        .map(key => ({
+          uid: key,
+          ...data[key]
+        }))
+        .filter(r => r.uid);
+      setFriendRequests(requestsList);
+    } else {
+      setFriendRequests([]);
+    }
   });
   
   // ✅ 보낸 요청
   sentRef.on('value', (snapshot) => {
     const data = snapshot.val();
-    setSentRequests(data ? Object.keys(data).map(key => ({ uid: key, ...data[key] })) : []);
+    if (data) {
+      const sentList = Object.keys(data)
+        .map(key => ({
+          uid: key,
+          ...data[key]
+        }))
+        .filter(s => s.uid);
+      setSentRequests(sentList);
+    } else {
+      setSentRequests([]);
+    }
   });
 };
 
@@ -902,37 +926,38 @@ const loadFriends = () => {
 const createRoom = (roomData) => {
   const roomsRef = window.firebase.database().ref('rooms');
   const newRoom = roomsRef.push();
- newRoom.set({
-  name: roomData.name,
-  hasPassword: !!roomData.password,
-  password: roomData.password || null,
-  createdBy: user.uid,
-  createdAt: Date.now(),
-  participants: 0,
-  creator: {
-    uid: user.uid,
-    name: user.name,
-    photo: user.photo
-  },
-  leaders: {
-    [user.uid]: {
-      type: 'creator',
+  newRoom.set({
+    name: roomData.name,
+    isDM: false,  // ✅ 일반 방은 명시적으로 false
+    hasPassword: !!roomData.password,
+    password: roomData.password || null,
+    createdBy: user.uid,
+    createdAt: Date.now(),
+    participants: 0,
+    creator: {
+      uid: user.uid,
       name: user.name,
-      photo: user.photo,
-      assignedAt: Date.now()
-    }
-  },
-  members: {},
-rules: {
-  chat: {},
-  drawing: {},
-  emoji: {},
-  quiz: {},
-  random: {}, // 추가
-},
-  bannedWords: [] // 추가
-});
-}
+      photo: user.photo
+    },
+    leaders: {
+      [user.uid]: {
+        type: 'creator',
+        name: user.name,
+        photo: user.photo,
+        assignedAt: Date.now()
+      }
+    },
+    members: {},
+    rules: {
+      chat: {},
+      drawing: {},
+      emoji: {},
+      quiz: {},
+      random: {},
+    },
+    bannedWords: []
+  });
+};
 
 
 
@@ -1292,7 +1317,6 @@ const searchUsers = async (query) => {
 
 const sendFriendRequest = async (targetUser) => {
   try {
-    // ✅ 중복 체크 먼저
     const sentSnapshot = await window.firebase.database()
       .ref(`userProfiles/${user.uid}/sentRequests/${targetUser.uid}`)
       .once('value');
@@ -1311,12 +1335,11 @@ const sendFriendRequest = async (targetUser) => {
       return;
     }
     
-    // ✅ 원자적 업데이트
     const updates = {};
     const timestamp = Date.now();
     
     updates[`userProfiles/${user.uid}/sentRequests/${targetUser.uid}`] = {
-      uid: targetUser.uid,
+      uid: targetUser.uid,  // ✅ uid 필드
       name: targetUser.name,
       photo: targetUser.photo,
       email: targetUser.email,
@@ -1324,7 +1347,7 @@ const sendFriendRequest = async (targetUser) => {
     };
     
     updates[`userProfiles/${targetUser.uid}/friendRequests/${user.uid}`] = {
-      uid: user.uid,
+      uid: user.uid,  // ✅ uid 필드
       name: user.name,
       photo: user.photo,
       email: user.email,
@@ -1333,8 +1356,10 @@ const sendFriendRequest = async (targetUser) => {
     
     await window.firebase.database().ref().update(updates);
     
-    showToast(`✅ Friend request sent to ${targetUser.name}!`, 'success');
+    // ✅ 즉시 새로고침
+    loadFriends();
     
+    showToast(`✅ Friend request sent to ${targetUser.name}!`, 'success');
   } catch (error) {
     console.error('❌ sendFriendRequest error:', error);
     showToast('❌ Failed to send request', 'error');
@@ -1349,8 +1374,8 @@ const acceptFriendRequest = async (requester) => {
     const updates = {};
     const timestamp = Date.now();
     
-    // ✅ 친구 추가
     updates[`userProfiles/${user.uid}/friends/${requester.uid}`] = {
+      uid: requester.uid,  // ✅ uid 필드 추가
       name: requester.name,
       photo: requester.photo,
       email: requester.email,
@@ -1358,20 +1383,22 @@ const acceptFriendRequest = async (requester) => {
     };
     
     updates[`userProfiles/${requester.uid}/friends/${user.uid}`] = {
+      uid: user.uid,  // ✅ uid 필드 추가
       name: user.name,
       photo: user.photo,
       email: user.email,
       addedAt: timestamp
     };
     
-    // ✅ 요청 삭제
     updates[`userProfiles/${user.uid}/friendRequests/${requester.uid}`] = null;
     updates[`userProfiles/${requester.uid}/sentRequests/${user.uid}`] = null;
     
     await window.firebase.database().ref().update(updates);
     
-    showToast(`✅ ${requester.name} is now your friend!`, 'success');
+    // ✅ 즉시 새로고침
+    loadFriends();
     
+    showToast(`✅ ${requester.name} is now your friend!`, 'success');
   } catch (error) {
     console.error('❌ acceptFriendRequest error:', error);
     showToast('❌ Failed to accept request', 'error');
@@ -1438,6 +1465,71 @@ const copyMessage = (messageText) => {
   showToast('📋 Message copied!', 'success');
 };
 
+// ✅ 타이핑 감지 핸들러
+const handleMessageInput = (e) => {
+  const value = e.target.value;
+  setNewMessage(value);
+
+  if (!selectedRoom || !user || !showTypingIndicator) return;
+
+  if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+
+  if (value.trim().length > 0) {
+    const typingRef = window.firebase
+      .database()
+      .ref(`rooms/${selectedRoom.id}/typing/${user.uid}`);
+    
+    typingRef.set({
+      userName: user.name,
+      userPhoto: user.photo,
+      timestamp: Date.now()
+    });
+
+    typingTimeoutRef.current = setTimeout(() => {
+      typingRef.remove();
+    }, 3000);
+  } else {
+    window.firebase.database().ref(`rooms/${selectedRoom.id}/typing/${user.uid}`).remove();
+  }
+};
+
+// ✅ 타이핑 상태 리스너
+useEffect(() => {
+  if (!selectedRoom || !showTypingIndicator) return;
+
+  const typingRef = window.firebase
+    .database()
+    .ref(`rooms/${selectedRoom.id}/typing`);
+
+  const listener = typingRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (data) {
+      const users = {};
+      Object.keys(data).forEach(uid => {
+        if (uid !== user?.uid) {
+          const typingUser = data[uid];
+          if (Date.now() - typingUser.timestamp < 5000) {
+            users[uid] = typingUser;
+          }
+        }
+      });
+      setTypingUsers(users);
+    } else {
+      setTypingUsers({});
+    }
+  });
+
+  return () => {
+    typingRef.off('value', listener);
+    if (user) {
+      window.firebase
+        .database()
+        .ref(`rooms/${selectedRoom.id}/typing/${user.uid}`)
+        .remove();
+    }
+  };
+}, [selectedRoom?.id, user, showTypingIndicator]);
+
 const sendMessage = () => {
   if (!newMessage.trim() || !selectedRoom) return;
   
@@ -1491,6 +1583,11 @@ const sendMessage = () => {
   });
 
   setNewMessage('');
+
+  window.firebase
+    .database()
+    .ref(`rooms/${selectedRoom.id}/typing/${user.uid}`)
+    .remove();
 };
 
 const sendDrawing = () => {
@@ -2334,8 +2431,12 @@ const getUserReaction = (feedId) => {
   }
 
   // 메인 앱
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black relative overflow-hidden">
+ return (
+  <div className={`min-h-screen relative overflow-hidden ${
+    isDarkMode 
+      ? 'bg-gradient-to-br from-gray-900 via-gray-800 to-black' 
+      : 'bg-gradient-to-br from-gray-100 via-gray-50 to-white'
+  }`}>
       {/* 고급 배경 효과 - 다층 구조 */}
       <div className="fixed inset-0 pointer-events-none">
         {/* 그라데이션 구체들 */}
@@ -2436,7 +2537,7 @@ const getUserReaction = (feedId) => {
         {/* 모바일에서 숨김 */}
         <div className="hidden sm:flex items-center gap-1">
           <Sparkles className="w-3 h-3 text-yellow-400" />
-          <span className="text-xs text-gray-400 font-medium">Made By Unvul® Ver 17.2</span>
+          <span className="text-xs text-gray-400 font-medium">Made By Unvul® Ver 21.3</span>
         </div>
       </div>
     </div>
@@ -2639,7 +2740,10 @@ const getUserReaction = (feedId) => {
 
 
 <div className="space-y-3 relative">
-  {(roomListMode === 'rooms' ? rooms.filter(r => !r.isDM) : myDMs).map(item => {
+  {(roomListMode === 'rooms' ? rooms.filter(r => r && r.isDM !== true) : myDMs)
+    .map(item => {
+    if (!item) return null;  // ✅ null 체크
+
     if (roomListMode === 'dm') {
       // ⭐ DM 메타데이터
       const dm = item;
@@ -3453,6 +3557,8 @@ onClick={() => {
   </div>
 )}
 
+
+
 {/* ✅ 통화 진행 중 알림 - 메시지 영역 위에 추가*/}
 {activeVideoCall && !showVideoCall && selectedRoom?.id === activeVideoCall.roomName?.split('-')[1] && (
   <div className="fixed bottom-8 right-8 z-40 animate-bounce">
@@ -3488,67 +3594,93 @@ onClick={() => {
 )}
 
 
+
 {/* 도구 바 */}
-<div className="flex gap-2 mb-3">
-                      <button
-                        onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                        className="relative group"
-                      >
-                        <div className="absolute inset-0 bg-gradient-to-r from-yellow-500 to-orange-500 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
-                        <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-yellow-600 transition-all flex items-center gap-1">
-                          <Smile className="w-5 h-5 text-white" />
-                          <ChevronUp className="w-3 h-3 text-white" />
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => setShowDrawing(true)}
-                        className="relative group"
-                      >
-                        <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
-                        <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-purple-600 transition-all">
-                          <Palette className="w-5 h-5 text-white" />
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => setShowQuizModal(true)}
-                        className="relative group"
-                      >
-                        <div className="absolute inset-0 bg-gradient-to-r from-pink-500 to-red-500 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
-                        <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-pink-600 transition-all">
-                          <HelpCircle className="w-5 h-5 text-white" />
-                        </div>
-                        </button>
-{/* ✅ 화상 통화 버튼 - 완전 수정 */}
-<button
-  onClick={() => startVideoCall()}
-  className="relative group"
->
-  <div className="absolute inset-0 bg-gradient-to-r from-red-500 to-rose-600 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
-  <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-red-600 transition-all">
-    <Rocket className="w-5 h-5 text-white" />
-  </div>
-</button>
+<div className="flex gap-2 mb-3 items-center">
+  <button
+    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+    className="relative group"
+  >
+    <div className="absolute inset-0 bg-gradient-to-r from-yellow-500 to-orange-500 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
+    <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-yellow-600 transition-all flex items-center gap-1">
+      <Smile className="w-5 h-5 text-white" />
+      <ChevronUp className="w-3 h-3 text-white" />
+    </div>
+  </button>
+  <button
+    onClick={() => setShowDrawing(true)}
+    className="relative group"
+  >
+    <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
+    <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-purple-600 transition-all">
+      <Palette className="w-5 h-5 text-white" />
+    </div>
+  </button>
+  <button
+    onClick={() => setShowQuizModal(true)}
+    className="relative group"
+  >
+    <div className="absolute inset-0 bg-gradient-to-r from-pink-500 to-red-500 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
+    <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-pink-600 transition-all">
+      <HelpCircle className="w-5 h-5 text-white" />
+    </div>
+  </button>
+  <button
+    onClick={() => startVideoCall()}
+    className="relative group"
+  >
+    <div className="absolute inset-0 bg-gradient-to-r from-red-500 to-rose-600 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
+    <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-red-600 transition-all">
+      <Rocket className="w-5 h-5 text-white" />
+    </div>
+  </button>
+  <button
+    onClick={() => setShowRandomPicker(true)}
+    className="relative group"
+  >
+    <div className="absolute inset-0 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
+    <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-green-600 transition-all">
+      <Zap className="w-5 h-5 text-white" />
+    </div>
+  </button>
+  <button
+    onClick={() => setShowMentionList(!showMentionList)}
+    className="relative group"
+  >
+    <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
+    <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-blue-600 transition-all">
+      <AtSign className="w-5 h-5 text-white" />
+    </div>
+  </button>
 
-<button
-  onClick={() => setShowRandomPicker(true)}
-  className="relative group"
->
-  <div className="absolute inset-0 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
-  <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-green-600 transition-all">
-    <Zap className="w-5 h-5 text-white" />
-  </div>
-</button>
+  {/* 빈 공간 */}
+  <div className="flex-1"></div>
 
-<button
-  onClick={() => setShowMentionList(!showMentionList)}
-  className="relative group"
->
-  <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg blur opacity-0 group-hover:opacity-50 transition"></div>
-  <div className="relative bg-gray-600 p-2 rounded-lg hover:bg-blue-600 transition-all">
-    <AtSign className="w-5 h-5 text-white" />
-  </div>
-</button>
+  {/* ✅ 타이핑 인디케이터 - 맨 오른쪽 */}
+  {Object.keys(typingUsers).length > 0 && (
+    <div className="flex items-center gap-1.5 bg-gray-600/50 px-3 py-1.5 rounded-lg">
+      <div className="flex items-center gap-1">
+        {Object.values(typingUsers)
+          .slice(0, 2)
+          .map((user, idx) => (
+            <div key={idx} className="flex items-center gap-0.5">
+              <img src={user.userPhoto} alt={user.userName} className="w-5 h-5 rounded-full border border-cyan-400" />
+              <span className="text-xs text-cyan-400 font-bold">{user.userName} Typing</span>
+            </div>
+          ))}
+        {Object.keys(typingUsers).length > 2 && (
+          <span className="text-xs text-gray-400">+{Object.keys(typingUsers).length - 2}</span>
+        )}
+      </div>
+      <div className="flex items-center gap-0.5 ml-1">
+        <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" style={{animationDelay: '0s'}}></div>
+        <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+        <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" style={{animationDelay: '0.4s'}}></div>
+      </div>
+    </div>
+  )}
 </div>
+
                     
 <div className="flex gap-3">
   <div className="flex-1 relative">
@@ -3560,7 +3692,7 @@ onClick={() => {
       }
       onChange={(e) => {
         if (Object.keys(selectedEmojis).length === 0) {
-          setNewMessage(e.target.value);
+              handleMessageInput(e);
         }
       }}
       onKeyPress={(e) => {
@@ -3902,6 +4034,122 @@ onClick={() => {
       <div className="flex items-center gap-2 text-xs">
         <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
         <span className="text-gray-300">Camera & Microphone Active</span>
+      </div>
+    </div>
+  </div>
+)}
+
+   {/* Quiz Modal */}
+{showQuizModal && (
+  <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="bg-gray-800/95 backdrop-blur-xl rounded-2xl p-6 max-w-md w-full border-2 border-pink-500/50 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+      <div className="absolute -inset-0.5 bg-gradient-to-r from-pink-500 to-red-600 rounded-2xl opacity-20 blur"></div>
+      <div className="relative">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-black text-pink-400 flex items-center gap-2">
+            <HelpCircle className="w-6 h-6" />
+            Create Quiz
+            <Award className="w-5 h-5 text-yellow-400" />
+          </h3>
+          <button
+            onClick={() => {
+              setShowQuizModal(false);
+              setQuizOptions(['', '', '', '']);
+            }}
+            className="text-gray-400 hover:text-red-400 transition-all"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+        
+        <div className="space-y-3">
+          <div className="relative">
+            <HelpCircle className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input
+              type="text"
+              id="quizQuestion"
+              placeholder="Quiz question"
+              className="w-full pl-10 pr-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl focus:border-pink-500 focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all"
+            />
+          </div>
+          
+          {quizOptions.map((opt, idx) => (
+            <div key={idx} className="relative">
+              <span className="absolute left-3 top-1/2 transform -translate-y-1/2 w-6 h-6 bg-pink-500 rounded-full flex items-center justify-center text-white text-xs font-bold">
+                {String.fromCharCode(65 + idx)}
+              </span>
+              <input
+                type="text"
+                value={opt}
+                onChange={(e) => {
+                  const newOptions = [...quizOptions];
+                  newOptions[idx] = e.target.value;
+                  setQuizOptions(newOptions);
+                }}
+                placeholder={`Option ${String.fromCharCode(65 + idx)}`}
+                className="w-full pl-11 pr-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl focus:border-pink-500 focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all"
+              />
+            </div>
+          ))}
+          
+          {quizOptions.length < 26 && (
+            <button
+              onClick={() => setQuizOptions([...quizOptions, ''])}
+              className="w-full py-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 rounded-xl transition-all flex items-center justify-center gap-2 border border-gray-600"
+            >
+              <Plus className="w-4 h-4" />
+              Add Option (Max: Z)
+            </button>
+          )}
+          
+          <div className="relative">
+            <Star className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-yellow-400" />
+            <input
+              type="text"
+              id="correctAnswer"
+              placeholder="Correct answer (A, B, C...)"
+              maxLength="1"
+              className="w-full pl-10 pr-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl focus:border-pink-500 focus:outline-none focus:ring-2 focus:ring-pink-500/50 transition-all uppercase"
+              onInput={(e) => e.target.value = e.target.value.toUpperCase()}
+            />
+          </div>
+        </div>
+        
+        <div className="flex gap-3 mt-4">
+          <button
+            onClick={() => {
+              const question = document.getElementById('quizQuestion').value;
+              const correct = document.getElementById('correctAnswer').value;
+              const validOptions = quizOptions.filter(o => o.trim());
+              
+              if (!question || validOptions.length < 2 || !correct) {
+                alert('❌ Please fill in the question, at least 2 options, and the correct answer!');
+                return;
+              }
+              
+              const answerIndex = correct.charCodeAt(0) - 65;
+              if (answerIndex < 0 || answerIndex >= validOptions.length) {
+                alert('❌ Correct answer must be a valid option letter!');
+                return;
+              }
+              
+              sendQuiz({ question, options: validOptions, correctAnswer: correct });
+            }}
+            className="flex-1 bg-gradient-to-r from-pink-500 to-red-600 text-white py-3 rounded-xl font-bold hover:shadow-xl hover:shadow-pink-500/50 transition-all flex items-center justify-center gap-2"
+          >
+            <Rocket className="w-5 h-5" />
+            Create Quiz
+          </button>
+          <button
+            onClick={() => {
+              setShowQuizModal(false);
+              setQuizOptions(['', '', '', '']);
+            }}
+            className="px-6 bg-gray-700 text-gray-300 rounded-xl hover:bg-gray-600 font-bold transition-all"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -4666,6 +4914,8 @@ return (
     </div>
   </div>
 )}
+
+
       {/* Friend Modal */}
 {showFriendModal && (
   <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -5076,68 +5326,59 @@ return (
             </div>
           </div>
 
-          {/* 채팅 번역 */}
-          <div className="bg-gray-700/50 p-4 rounded-xl border border-purple-500/30">
-            <h4 className="font-bold text-purple-300 mb-3 flex items-center gap-2">
-              <Globe className="w-5 h-5" />
-              Chat Translation
-            </h4>
-            <div className="space-y-3">
-              <label className="flex items-center gap-2 cursor-pointer group">
-                <input
-                  type="checkbox"
-                  checked={translateEnabled}
-                  onChange={(e) => setTranslateEnabled(e.target.checked)}
-                  className="w-5 h-5 rounded border-2 border-gray-500 bg-gray-600 checked:bg-purple-500 checked:border-purple-500 cursor-pointer transition-all"
-                />
-                <span className="text-sm font-bold text-gray-300 group-hover:text-purple-400 transition-all">
-                  Enable Auto Translation
-                </span>
-              </label>
-              
-              {translateEnabled && (
-                <div className="relative space-y-3">
-                  <div className="relative">
-                    <Globe className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                    <select
-                      value={targetLanguage}
-                      onChange={(e) => setTargetLanguage(e.target.value)}
-                      className="w-full pl-10 pr-4 py-3 bg-gray-600 border border-gray-500 text-white rounded-xl focus:border-purple-500 focus:outline-none transition-all"
-                    >
-                      <option value="ko">Korean (한국어)</option>
-                      <option value="en">English</option>
-                      <option value="ja">Japanese (日本語)</option>
-                      <option value="zh">Chinese (中文)</option>
-                      <option value="es">Spanish (Español)</option>
-                      <option value="fr">French (Français)</option>
-                      <option value="de">German (Deutsch)</option>
-                    </select>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Custom API URL (LibreTranslate compatible)"
-                    value={translateApiUrl}
-                    onChange={(e) => {
-                      setTranslateApiUrl(e.target.value);
-                      localStorage.setItem('translateApiUrl', e.target.value);
-                    }}
-                    className="w-full px-3 py-2 bg-gray-600 border border-gray-500 text-white rounded-xl focus:border-purple-500 focus:outline-none transition-all text-sm"
-                  />
-                  <input
-                    type="password"
-                    placeholder="API Key (optional)"
-                    value={translateApiKey}
-                    onChange={(e) => {
-                      setTranslateApiKey(e.target.value);
-                      localStorage.setItem('translateApiKey', e.target.value);
-                    }}
-                    className="w-full px-3 py-2 bg-gray-600 border border-gray-500 text-white rounded-xl focus:border-purple-500 focus:outline-none transition-all text-sm"
-                  />
-                  <div className="text-[10px] text-gray-400">※ 기본 미지정 시 libretranslate.com을 사용합니다.</div>
-                </div>
-              )}
-            </div>
-          </div>
+          {/* 타이핑 인디케이터 토글 */}
+<div className="bg-gray-700/50 p-4 rounded-xl border border-cyan-500/30">
+  <h4 className="font-bold text-cyan-300 mb-3 flex items-center gap-2">
+    <MessageCircle className="w-5 h-5" />
+    Typing Indicator
+  </h4>
+  <label className="flex items-center gap-2 cursor-pointer">
+    <input
+      type="checkbox"
+      checked={showTypingIndicator}
+      onChange={(e) => setShowTypingIndicator(e.target.checked)}
+      className="w-5 h-5 rounded border-2 border-gray-500 bg-gray-600 checked:bg-cyan-500 checked:border-cyan-500 cursor-pointer transition-all"
+    />
+    <span className="text-sm font-bold text-gray-300">
+      Show when others are typing / Also hides your indicator to hide you texting to someone
+    </span>
+  </label>
+  <div className="text-xs text-gray-400 mt-2">
+  
+  </div>
+</div>
+
+{/* 라이트 모드 토글 */}
+<div className="bg-gray-700/50 p-4 rounded-xl border border-cyan-500/30">
+  <h4 className="font-bold text-cyan-300 mb-3 flex items-center gap-2">
+    <Palette className="w-5 h-5" />
+    Theme
+  </h4>
+  <label className="flex items-center gap-2 cursor-pointer group">
+    <input
+      type="checkbox"
+      checked={!isDarkMode}
+      onChange={(e) => setIsDarkMode(!e.target.checked)}
+      className="w-5 h-5 rounded border-2 border-gray-500 bg-gray-600 checked:bg-cyan-500 checked:border-cyan-500 cursor-pointer transition-all"
+    />
+    <span className="text-sm font-bold text-gray-300 group-hover:text-cyan-400 transition-all">
+      Light Mode
+    </span>
+  </label>
+  <div className="text-xs text-gray-400 mt-2 flex items-center gap-2">
+    {isDarkMode ? (
+      <>
+        <span></span>
+      </>
+    ) : (
+      <>
+        <span></span>
+      </>
+    )}
+  </div>
+</div>
+
+
 
           {/* 메시지 관리(퀵 토글) */}
           <div className="bg-gray-700/50 p-4 rounded-xl border border-cyan-500/30">
